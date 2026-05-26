@@ -1,0 +1,7 @@
+# ouija scope file (test fixture)
+# One authorized host (or host:port) per line. Blank lines and comments ignored.
+# The mock LLM endpoint binds to 127.0.0.1 on an ephemeral port at test startup,
+# so 127.0.0.1 is authorized here. example.com is intentionally NOT listed so the
+# out-of-scope test can prove the scope gate refuses it.
+127.0.0.1
+localhost
