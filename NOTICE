@@ -1,0 +1,79 @@
+ouija
+Copyright (c) 2026 Bugsy Hewitt
+Licensed under the MIT License (see LICENSE).
+
+=============================================================================
+ATTACK-PROMPT PROVENANCE AND PER-SOURCE LICENSE VERIFICATION
+=============================================================================
+
+ouija ships a hand-curated corpus of adversarial prompts in ouija/corpus/.
+This NOTICE documents the provenance of those prompts and the license
+verification performed for every public dataset that informed them, per the
+v0.1 attribution requirement.
+
+-----------------------------------------------------------------------------
+Summary of provenance
+-----------------------------------------------------------------------------
+All prompt STRINGS shipped in ouija/corpus/ (injection.json, disclosure.json,
+dos.json) are ORIGINALLY AUTHORED by the ouija project. They are generic,
+well-known prompt-injection / disclosure / DoS *techniques* (e.g. "ignore
+previous instructions", system-prompt extraction, persona-shift, delimiter
+confusion) rewritten in our own words and instrumented with our own benign
+detection marker (OUIJA_INJECTION_CONFIRMED). No prompt text was copied
+verbatim from any external dataset.
+
+The categories of techniques were INFORMED by the public LLM-red-teaming
+literature and datasets listed below. Because no verbatim text was copied,
+no third-party prompt is redistributed by ouija. Attribution is provided
+regardless, for transparency and good-faith credit.
+
+-----------------------------------------------------------------------------
+Per-source license verification
+-----------------------------------------------------------------------------
+
+1. HarmBench
+   - Project: HarmBench (Center for AI Safety, et al.)
+   - Repository: https://github.com/centerforaisafety/HarmBench
+   - License: MIT License (verified present in the repository's LICENSE file).
+   - Verification result: SAFE to borrow with attribution. ouija does not
+     redistribute any HarmBench prompt verbatim; HarmBench informed the
+     taxonomy of harmful-behavior categories only.
+   - Status: attributed here; no verbatim text included.
+
+2. JailbreakBench
+   - Project: JailbreakBench
+   - Repository: https://github.com/JailbreakBench/jailbreakbench
+   - License: MIT License (verified present in the repository's LICENSE file).
+   - Verification result: SAFE to borrow with attribution. ouija does not
+     redistribute any JailbreakBench prompt verbatim; it informed our
+     persona-shift / multi-turn jailbreak technique categories only.
+   - Status: attributed here; no verbatim text included.
+
+3. AdvBench (from the "llm-attacks" / GCG repository)
+   - Project: AdvBench harmful_behaviors / harmful_strings
+   - Repository: https://github.com/llm-attacks/llm-attacks
+   - License: The original llm-attacks repository's top-level LICENSE is MIT,
+     but the license status of the AdvBench harmful-behavior STRINGS
+     themselves is NOT explicitly stated at the data level in the original
+     repository.
+   - Verification result: Because the per-string license is ambiguous, ouija
+     OMITS all AdvBench-sourced prompts entirely. No AdvBench string is
+     pulled, paraphrased-from-a-specific-string, or redistributed. This
+     satisfies the v0.1 requirement to either verify-and-document or omit:
+     ouija chooses to OMIT.
+   - Status: NOT used.
+
+-----------------------------------------------------------------------------
+Detection marker
+-----------------------------------------------------------------------------
+OUIJA_INJECTION_CONFIRMED is a benign, project-specific canary string used to
+detect whether a target executed an injected instruction. It has no harmful
+content and is original to ouija.
+
+-----------------------------------------------------------------------------
+Third-party runtime dependencies
+-----------------------------------------------------------------------------
+- httpx   — BSD-3-Clause
+- pydantic — MIT
+Their licenses apply to their respective code and are not reproduced here;
+see each project's distribution for full terms.
