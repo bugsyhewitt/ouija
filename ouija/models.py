@@ -52,6 +52,10 @@ class Finding(BaseModel):
     response_excerpt: str
     evidence: str
     confidence: float = Field(ge=0.0, le=1.0)
+    # Reliability fields — populated when --repeats > 1.
+    attempts: int = 1
+    successes: int = 1
+    success_rate: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class ScanResult(BaseModel):

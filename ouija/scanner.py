@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
+from typing import NamedTuple
 
 import httpx
 
@@ -11,8 +13,17 @@ from ouija.canary import CANARY_PLACEHOLDER, make_canary
 from ouija.client import TargetClient
 from ouija.corpus import LoadedSet
 from ouija.detect import detect
-from ouija.models import ScanResult
+from ouija.models import Finding, ScanResult
 from ouija.mutate import mutate
+
+
+class _ProbeResult(NamedTuple):
+    """Result of a single probe attempt."""
+
+    key: str           # "<pattern.id>/<variant_id>" — logical identity across repeats
+    finding: Finding | None
+    attempt_prompt: str
+    attempt_reply_text: str
 
 
 async def _run_async(
@@ -21,8 +32,10 @@ async def _run_async(
     loaded: LoadedSet,
     api_key_env: str | None,
     concurrency: int,
+    request_template: str | None = None,
+    repeats: int = 1,
 ) -> ScanResult:
-    client = TargetClient(target, api_key_env=api_key_env)
+    client = TargetClient(target, api_key_env=api_key_env, request_template=request_template)
     result = ScanResult(
         version=__version__,
         target=target,
@@ -38,7 +51,7 @@ async def _run_async(
 
     async with httpx.AsyncClient() as http:
 
-        async def probe(pattern, variant_id, prompt):
+        async def probe(pattern, variant_id, prompt, attempt_num) -> _ProbeResult:
             async with sem:
                 reply = await client.send(http, prompt)
             meta = loaded.meta[pattern.id]
@@ -51,19 +64,58 @@ async def _run_async(
                 owasp=meta["owasp"],
                 canary_token=canary.token if pattern.canary else None,
             )
-            return finding
+            key = f"{pattern.id}/{variant_id}"
+            return _ProbeResult(
+                key=key,
+                finding=finding,
+                attempt_prompt=prompt,
+                attempt_reply_text=reply.text or "",
+            )
 
         tasks = []
         for pattern in loaded.patterns:
             for variant_id, prompt in mutate(pattern):
                 if pattern.canary:
                     prompt = prompt.replace(CANARY_PLACEHOLDER, canary.url)
-                tasks.append(probe(pattern, variant_id, prompt))
+                for attempt_num in range(repeats):
+                    tasks.append(probe(pattern, variant_id, prompt, attempt_num))
 
         result.patterns_sent = len(tasks)
-        for finding in await asyncio.gather(*tasks):
-            if finding is not None:
-                result.findings.append(finding)
+        raw_results: list[_ProbeResult] = await asyncio.gather(*tasks)
+
+    # --- aggregate per logical key ---
+    # Group all attempt results by key.
+    by_key: dict[str, list[_ProbeResult]] = defaultdict(list)
+    for pr in raw_results:
+        by_key[pr.key].append(pr)
+
+    # For each key: if ANY attempt yielded a finding, emit one Finding
+    # annotated with hit-rate stats.
+    for key, attempts_list in by_key.items():
+        total = len(attempts_list)
+        successes_list = [pr for pr in attempts_list if pr.finding is not None]
+        n_successes = len(successes_list)
+
+        if n_successes == 0:
+            continue
+
+        # Use the first successful finding as the canonical finding.
+        base_finding = successes_list[0].finding
+        assert base_finding is not None  # guaranteed by filter above
+
+        if total == 1:
+            # No repeat data — emit as-is (preserve existing behaviour).
+            result.findings.append(base_finding)
+        else:
+            rate = n_successes / total
+            annotated = base_finding.model_copy(
+                update={
+                    "attempts": total,
+                    "successes": n_successes,
+                    "success_rate": rate,
+                }
+            )
+            result.findings.append(annotated)
 
     return result
 
@@ -74,8 +126,18 @@ def run_scan(
     loaded: LoadedSet,
     api_key_env: str | None = None,
     concurrency: int = 5,
+    request_template: str | None = None,
+    repeats: int = 1,
 ) -> ScanResult:
     """Synchronous entry point that drives the async probe loop."""
     return asyncio.run(
-        _run_async(target, attack_set_name, loaded, api_key_env, concurrency)
+        _run_async(
+            target,
+            attack_set_name,
+            loaded,
+            api_key_env,
+            concurrency,
+            request_template=request_template,
+            repeats=repeats,
+        )
     )

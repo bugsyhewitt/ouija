@@ -74,6 +74,11 @@ def to_h1md(result: ScanResult) -> str:
         lines.append(f"**Category:** {f.category}  ")
         lines.append(f"**OWASP LLM Top 10:** {f.owasp}  ")
         lines.append(f"**Confidence:** {f.confidence:.0%}  ")
+        if f.attempts > 1:
+            lines.append(
+                f"**Reliability:** {f.successes}/{f.attempts} attempts "
+                f"({f.success_rate:.0%})  "
+            )
         lines.append(f"**Finding ID:** `{f.id}`  ")
         lines.append(f"**Pattern:** `{f.pattern_id}` (technique: {f.technique})")
         lines.append("")

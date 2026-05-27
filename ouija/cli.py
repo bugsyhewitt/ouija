@@ -12,6 +12,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from ouija import __version__
@@ -79,6 +80,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Max in-flight requests to the target (default: 5).",
     )
     parser.add_argument(
+        "--request-template",
+        metavar="JSON",
+        default=None,
+        dest="request_template",
+        help=(
+            'JSON request body template. Must be valid JSON containing the '
+            'placeholder value "{prompt}" (quoted) which ouija replaces with '
+            'each attack prompt before sending. Use this when the target does '
+            'not accept the default {\"prompt\": \"...\"} shape. Example for '
+            'OpenAI-style endpoints: '
+            '\'{"messages": [{"role": "user", "content": "{prompt}"}]}\'. '
+            "The prompt value is JSON-encoded before insertion so embedded "
+            "quotes and newlines are escaped correctly."
+        ),
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Send each mutated prompt N times (default: 1 to preserve cost). "
+            "Recommended: 3-5. Defeats LLM non-determinism: an attack that "
+            "succeeds on any attempt is a reportable finding with a hit-rate "
+            "(e.g. '3/5 attempts succeeded')."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"ouija {__version__}",
@@ -86,9 +115,48 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_TEMPLATE_PLACEHOLDER = '"{prompt}"'
+
+
+class _TemplateError(Exception):
+    """Raised by _validate_request_template on invalid input."""
+
+
+def _validate_request_template(raw: str) -> str:
+    """Validate *raw* as a JSON request template; return it unchanged on success.
+
+    Raises :exc:`_TemplateError` with a human-readable message on failure:
+    - not valid JSON
+    - does not contain the required ``"{prompt}"`` placeholder
+    """
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise _TemplateError(
+            f'--request-template is not valid JSON: {exc}'
+        ) from exc
+
+    if _TEMPLATE_PLACEHOLDER not in raw:
+        raise _TemplateError(
+            f'--request-template must contain the placeholder '
+            f'{_TEMPLATE_PLACEHOLDER} (as a quoted JSON string value)'
+        )
+
+    return raw
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Validate request template if provided.
+    request_template: str | None = None
+    if args.request_template is not None:
+        try:
+            request_template = _validate_request_template(args.request_template)
+        except _TemplateError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
 
     # Scope gate — refuse before sending any request.
     try:
@@ -110,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
             loaded=loaded,
             api_key_env=args.api_key_env,
             concurrency=args.concurrency,
+            request_template=request_template,
+            repeats=args.repeats,
         )
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
         print(f"error: scan failed: {exc}", file=sys.stderr)
