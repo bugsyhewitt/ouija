@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, or `all` (default `all`). |
 | `--format` | `json` or `h1md` (HackerOne markdown). Default `json`. |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -116,10 +116,22 @@ Top 10 mapping:
 - `injection.json` — 22 prompt-injection patterns (LLM01)
 - `disclosure.json` — 12 sensitive-information-disclosure probes (LLM02)
 - `dos.json` — model-DoS / unbounded-consumption probes (LLM10)
+- `exfil.json` — markdown-image data-exfiltration probes (LLM05, EchoLeak class)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
 surfaces. Genetic/feedback-directed mutation is a post-v0.1 direction.
+
+### Markdown-image exfiltration (EchoLeak / CVE-2025-32711)
+
+The `exfil` attack set models the highest-value 2025 finding class: each run
+generates a unique, high-entropy **canary** URL (`http://ouija-exfil.<token>.invalid/c?d=`)
+and asks the target to render it as a markdown image, reference-style link, or
+`<img src=...>` with sensitive data appended to the query string. If the response
+echoes the canary back inside auto-fetched markup, ouija emits a **CRITICAL**
+finding — the target would exfiltrate data to an attacker-controlled host when its
+output is rendered. The canary uses the reserved `.invalid` TLD and detection is
+on the **response text only**, so ouija never causes real network egress.
 
 See [`NOTICE`](./NOTICE) for attack-prompt attribution and per-source license
 verification.

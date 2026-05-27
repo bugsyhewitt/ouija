@@ -24,6 +24,14 @@ _IMPACT = {
         "latency and cost (token-based billing) and degrading availability "
         "for legitimate users."
     ),
+    "improper_output_handling": (
+        "The endpoint renders attacker-controlled markup (markdown images, "
+        "links, or HTML) into its output. When that output is auto-rendered by "
+        "a downstream surface, the embedded URL is fetched silently — "
+        "exfiltrating system prompts, conversation history, or secrets to an "
+        "attacker-controlled host with zero user interaction (EchoLeak / "
+        "CVE-2025-32711 'lethal trifecta' class)."
+    ),
 }
 
 _SEVERITY_ORDER = {

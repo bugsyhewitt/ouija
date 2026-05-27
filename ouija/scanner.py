@@ -7,6 +7,7 @@ import asyncio
 import httpx
 
 from ouija import __version__
+from ouija.canary import CANARY_PLACEHOLDER, make_canary
 from ouija.client import TargetClient
 from ouija.corpus import LoadedSet
 from ouija.detect import detect
@@ -30,6 +31,11 @@ async def _run_async(
     )
     sem = asyncio.Semaphore(concurrency)
 
+    # One per-run exfiltration canary shared by all canary patterns this scan.
+    # A fresh high-entropy token per run keeps detection near-zero-false-positive
+    # and prevents a target from learning the token across runs.
+    canary = make_canary()
+
     async with httpx.AsyncClient() as http:
 
         async def probe(pattern, variant_id, prompt):
@@ -43,12 +49,15 @@ async def _run_async(
                 reply,
                 category=meta["category"],
                 owasp=meta["owasp"],
+                canary_token=canary.token if pattern.canary else None,
             )
             return finding
 
         tasks = []
         for pattern in loaded.patterns:
             for variant_id, prompt in mutate(pattern):
+                if pattern.canary:
+                    prompt = prompt.replace(CANARY_PLACEHOLDER, canary.url)
                 tasks.append(probe(pattern, variant_id, prompt))
 
         result.patterns_sent = len(tasks)

@@ -32,6 +32,10 @@ class AttackPattern(BaseModel):
     # When set, presence of this marker string in the response is strong
     # evidence the injection succeeded.
     marker: Optional[str] = None
+    # When True, the prompt carries a `{canary}` placeholder that the scanner
+    # fills with a per-run exfiltration canary URL before sending; detection is
+    # then on whether the response renders that canary as markup (EchoLeak).
+    canary: bool = False
 
 
 class Finding(BaseModel):
