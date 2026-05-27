@@ -73,6 +73,28 @@ def _safe_reply(prompt: str) -> str:
     )
 
 
+def _extract_prompt(body: bytes) -> str:
+    """Extract the attack prompt from the request body.
+
+    Tries ``body["prompt"]`` first (default ouija shape), then
+    ``body["messages"][0]["content"]`` (OpenAI-style shape) so this mock
+    can serve both the default and custom-template tests.
+    """
+    try:
+        parsed = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        return ""
+    if isinstance(parsed.get("prompt"), str):
+        return parsed["prompt"]
+    # OpenAI messages array
+    messages = parsed.get("messages")
+    if isinstance(messages, list) and messages:
+        first = messages[0]
+        if isinstance(first, dict) and isinstance(first.get("content"), str):
+            return first["content"]
+    return ""
+
+
 def _make_handler(reply_fn):
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # silence test noise
@@ -81,10 +103,7 @@ def _make_handler(reply_fn):
         def do_POST(self):
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length) if length else b"{}"
-            try:
-                prompt = json.loads(body or b"{}").get("prompt", "")
-            except json.JSONDecodeError:
-                prompt = ""
+            prompt = _extract_prompt(body)
             reply = reply_fn(prompt)
             payload = json.dumps({"reply": reply}).encode("utf-8")
             self.send_response(200)

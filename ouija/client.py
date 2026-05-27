@@ -1,17 +1,23 @@
 """HTTP client for talking to a target LLM endpoint.
 
-Sends a single prompt as JSON ({"prompt": ...}) and extracts the model's text
-reply. The endpoint shape is intentionally simple for v0.1: any HTTP endpoint
-that accepts a JSON body with a `prompt` field and returns JSON. We try a few
-common reply field names before falling back to the raw body text.
+Sends a single prompt as JSON and extracts the model's text reply. By default
+the request body is ``{"prompt": "<attack prompt>"}`` — the simplest shape that
+works against many LLM proxies. When the caller supplies a *request template*
+(a JSON string containing the literal placeholder ``"{prompt}"``), that template
+is rendered per-request so ouija can target endpoints with arbitrary body shapes
+(e.g. OpenAI-style ``/v1/chat/completions``, custom field names, nested objects).
 
-[Worker decision: response field extraction is heuristic (reply/response/
-content/output/text/message). Custom request/response templating is a post-v0.1
-direction; v0.1 proves the loop against a conventional shape.]
+Template rendering uses ``template.replace('"{prompt}"', json.dumps(prompt))``
+which correctly JSON-encodes the prompt value (handling embedded quotes, newlines,
+and other special characters) before inserting it into the template body.
+
+[Worker decision (v0.1): response field extraction is heuristic (reply/response/
+content/output/text/message). Custom request templating landed in v0.1.1.]
 """
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 
@@ -49,6 +55,9 @@ def _extract_text(payload: object) -> str:
     return ""
 
 
+_TEMPLATE_PLACEHOLDER = '"{prompt}"'
+
+
 class TargetClient:
     """Async client bound to a single in-scope target URL."""
 
@@ -57,6 +66,7 @@ class TargetClient:
         target: str,
         api_key_env: str | None = None,
         timeout: float = 20.0,
+        request_template: str | None = None,
     ):
         self.target = target
         self.timeout = timeout
@@ -65,11 +75,29 @@ class TargetClient:
             token = os.environ.get(api_key_env)
             if token:
                 self._headers["Authorization"] = f"Bearer {token}"
+        self._request_template = request_template
+
+    def _build_body(self, prompt: str) -> bytes:
+        """Return the JSON-encoded request body for *prompt*.
+
+        When a request template is configured, ``"{prompt}"`` in the template
+        string is replaced with the JSON-encoded prompt value so that any
+        special characters (quotes, newlines, unicode) are safely escaped.
+        When no template is configured the classic ``{"prompt": "..."}`` shape
+        is used.
+        """
+        if self._request_template is not None:
+            body_str = self._request_template.replace(
+                _TEMPLATE_PLACEHOLDER, json.dumps(prompt)
+            )
+            return body_str.encode()
+        return json.dumps({"prompt": prompt}).encode()
 
     async def send(self, client: httpx.AsyncClient, prompt: str) -> Reply:
+        body = self._build_body(prompt)
         resp = await client.post(
             self.target,
-            json={"prompt": prompt},
+            content=body,
             headers=self._headers,
             timeout=self.timeout,
         )

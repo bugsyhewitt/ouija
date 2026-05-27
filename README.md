@@ -51,9 +51,36 @@ ouija \
 | `--format` | `json` or `h1md` (HackerOne markdown). Default `json`. |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
+| `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
+
+## Custom request body shapes (`--request-template`)
+
+Not every LLM endpoint accepts `{"prompt": "..."}`. Use `--request-template` to
+tell ouija the exact body shape your target expects. Write a valid JSON string
+with `"{prompt}"` (the literal four characters `{prompt}`, quoted as a JSON
+string value) wherever the attack text should go:
+
+```bash
+# OpenAI-style chat completions endpoint
+ouija \
+  --target https://api.example.com/v1/chat/completions \
+  --scope-file scope.txt \
+  --request-template '{"model": "gpt-4o", "messages": [{"role": "user", "content": "{prompt}"}]}'
+
+# Endpoint that expects a "query" field
+ouija \
+  --target https://api.example.com/ask \
+  --scope-file scope.txt \
+  --request-template '{"query": "{prompt}", "stream": false}'
+```
+
+ouija JSON-encodes the attack prompt before inserting it, so embedded quotes,
+newlines, and other special characters are always escaped correctly. If the
+template is not valid JSON or is missing the `"{prompt}"` placeholder ouija
+exits with code `3` before sending any requests.
 
 ## Scope-file format
 
