@@ -11,8 +11,17 @@ Template rendering uses ``template.replace('"{prompt}"', json.dumps(prompt))``
 which correctly JSON-encodes the prompt value (handling embedded quotes, newlines,
 and other special characters) before inserting it into the template body.
 
+Response extraction has two modes. By default ouija heuristically guesses the
+reply field (``reply``/``response``/``content``/OpenAI ``choices[0].message.content``/…).
+When the caller supplies a *response path* — a dotted/bracket selector such as
+``choices.0.message.content`` or ``data[0].text`` — ouija pins extraction to that
+exact location, which is required for non-standard response shapes where the
+heuristic would otherwise read the wrong field (or nothing) and silently report
+zero findings.
+
 [Worker decision (v0.1): response field extraction is heuristic (reply/response/
-content/output/text/message). Custom request templating landed in v0.1.1.]
+content/output/text/message). Custom request templating landed in v0.1.1.
+Response-path pinning (--response-path) landed in v0.1.2.]
 """
 
 from __future__ import annotations
@@ -32,6 +41,102 @@ class Reply:
 
 
 _REPLY_FIELDS = ("reply", "response", "content", "output", "text", "message", "answer")
+
+
+class ResponsePathError(ValueError):
+    """Raised when a --response-path selector is syntactically invalid."""
+
+
+def parse_response_path(path: str) -> list[str | int]:
+    """Parse a dotted/bracket selector into a list of dict-key / list-index steps.
+
+    Dependency-free JSONPath-lite. Supported forms (and combinations):
+
+      ``choices.0.message.content``    -> ['choices', 0, 'message', 'content']
+      ``choices[0].message.content``   -> ['choices', 0, 'message', 'content']
+      ``data[0][1].text``              -> ['data', 0, 1, 'text']
+
+    A step that is a base-10 integer literal is treated as a list index;
+    everything else is a dict key. Bracket segments (``[N]`` or ``[key]``) are
+    expanded inline. Empty segments are rejected.
+
+    Raises :exc:`ResponsePathError` on empty input or malformed brackets.
+    """
+    if not path or not path.strip():
+        raise ResponsePathError("--response-path must not be empty")
+
+    steps: list[str | int] = []
+    for dotted in path.split("."):
+        # Split off any bracket suffixes on this dotted segment.
+        # e.g. "choices[0][1]" -> base "choices", brackets ["0", "1"]
+        idx = dotted.find("[")
+        base = dotted if idx == -1 else dotted[:idx]
+        if base:
+            steps.append(_coerce_step(base))
+        elif idx == -1:
+            # An empty dotted segment with no bracket (e.g. "a..b") is invalid.
+            raise ResponsePathError(
+                f"--response-path has an empty segment in {path!r}"
+            )
+
+        if idx != -1:
+            remainder = dotted[idx:]
+            # remainder is a run of "[...]" groups
+            while remainder:
+                if not remainder.startswith("["):
+                    raise ResponsePathError(
+                        f"--response-path has malformed bracket syntax near "
+                        f"{remainder!r} in {path!r}"
+                    )
+                close = remainder.find("]")
+                if close == -1:
+                    raise ResponsePathError(
+                        f"--response-path has an unclosed '[' in {path!r}"
+                    )
+                inner = remainder[1:close]
+                if inner == "":
+                    raise ResponsePathError(
+                        f"--response-path has an empty '[]' in {path!r}"
+                    )
+                steps.append(_coerce_step(inner))
+                remainder = remainder[close + 1:]
+
+    if not steps:
+        raise ResponsePathError(f"--response-path yielded no steps from {path!r}")
+    return steps
+
+
+def _coerce_step(token: str) -> str | int:
+    """A base-10 integer token is a list index; otherwise a (quote-stripped) key."""
+    if token.lstrip("-").isdigit():
+        return int(token)
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+        return token[1:-1]
+    return token
+
+
+def extract_by_path(payload: object, steps: list[str | int]) -> str:
+    """Walk *payload* following *steps*; return the located text or "".
+
+    Returns "" (rather than raising) when the path does not resolve to a string
+    against this particular response — a missing/short field is a normal runtime
+    condition (the target simply didn't reply in the expected shape) and the
+    caller falls back to the raw body. Syntax errors in the path itself are
+    surfaced earlier, at parse time, via :exc:`ResponsePathError`.
+    """
+    cur: object = payload
+    for step in steps:
+        if isinstance(step, int):
+            if isinstance(cur, list) and -len(cur) <= step < len(cur):
+                cur = cur[step]
+            else:
+                return ""
+        else:
+            if isinstance(cur, dict) and step in cur:
+                cur = cur[step]
+            else:
+                return ""
+    return cur if isinstance(cur, str) else ""
 
 
 def _extract_text(payload: object) -> str:
@@ -67,6 +172,7 @@ class TargetClient:
         api_key_env: str | None = None,
         timeout: float = 20.0,
         request_template: str | None = None,
+        response_path: str | None = None,
     ):
         self.target = target
         self.timeout = timeout
@@ -76,6 +182,11 @@ class TargetClient:
             if token:
                 self._headers["Authorization"] = f"Bearer {token}"
         self._request_template = request_template
+        # Parse the response path once at construction so a syntactically invalid
+        # selector fails fast (ResponsePathError) rather than per-request.
+        self._response_steps: list[str | int] | None = (
+            parse_response_path(response_path) if response_path is not None else None
+        )
 
     def _build_body(self, prompt: str) -> bytes:
         """Return the JSON-encoded request body for *prompt*.
@@ -104,7 +215,12 @@ class TargetClient:
         raw = resp.text
         text = ""
         try:
-            text = _extract_text(resp.json())
+            parsed = resp.json()
+            if self._response_steps is not None:
+                # Pinned extraction: read exactly the configured location.
+                text = extract_by_path(parsed, self._response_steps)
+            else:
+                text = _extract_text(parsed)
         except Exception:
             text = raw
         if not text:

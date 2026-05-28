@@ -52,6 +52,7 @@ ouija \
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
+| `--response-path` | Dotted/bracket selector pinning where the reply text lives in the response JSON, e.g. `choices.0.message.content`. Use when the target returns a non-standard response shape — see below. |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
@@ -81,6 +82,40 @@ ouija JSON-encodes the attack prompt before inserting it, so embedded quotes,
 newlines, and other special characters are always escaped correctly. If the
 template is not valid JSON or is missing the `"{prompt}"` placeholder ouija
 exits with code `3` before sending any requests.
+
+## Custom response shapes (`--response-path`)
+
+`--request-template` controls how ouija *sends* the prompt; `--response-path`
+controls how it *reads the reply back*. By default ouija guesses the reply field
+heuristically — but against a non-standard response shape that guess can read the
+wrong field (or nothing), making ouija **silently report zero findings even when
+the target is vulnerable.** Pin the exact location with `--response-path` to close
+that trap.
+
+The selector is a dependency-free dotted/bracket path. Integer segments are list
+indices; everything else is a dict key. Both `.0.` and `[0]` index syntaxes work,
+and negative indices are supported:
+
+```bash
+# Full OpenAI chat-completions endpoint: messages-in, choices[0].message.content-out
+ouija \
+  --target https://api.example.com/v1/chat/completions \
+  --scope-file scope.txt \
+  --request-template '{"model": "gpt-4o", "messages": [{"role": "user", "content": "{prompt}"}]}' \
+  --response-path 'choices.0.message.content'
+
+# Anthropic messages endpoint: reply text at content[0].text
+ouija \
+  --target https://api.example.com/v1/messages \
+  --scope-file scope.txt \
+  --request-template '{"model": "claude-3-5-sonnet", "max_tokens": 1024, "messages": [{"role": "user", "content": "{prompt}"}]}' \
+  --response-path 'content[0].text'
+```
+
+If the path is syntactically invalid (empty, unclosed bracket, etc.) ouija exits
+with code `3` before sending any requests. If the path is valid but doesn't
+resolve against a particular response, ouija falls back to the raw response body
+so detection still has something to work with.
 
 ## Scope-file format
 

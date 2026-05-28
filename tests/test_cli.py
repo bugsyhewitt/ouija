@@ -14,7 +14,10 @@ def test_help_lists_required_flags(capsys):
     with pytest.raises(SystemExit):
         parser.parse_args(["--help"])
     out = capsys.readouterr().out
-    for flag in ("--target", "--scope-file", "--attack-set", "--format", "--api-key-env"):
+    for flag in (
+        "--target", "--scope-file", "--attack-set", "--format", "--api-key-env",
+        "--request-template", "--response-path",
+    ):
         assert flag in out
     # attack-set choices
     for choice in ("injection", "disclosure", "dos", "all"):

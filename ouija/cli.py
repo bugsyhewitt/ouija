@@ -16,6 +16,7 @@ import json
 import sys
 
 from ouija import __version__
+from ouija.client import ResponsePathError, parse_response_path
 from ouija.corpus import ATTACK_SETS, load_attack_set
 from ouija.report import render
 from ouija.scanner import run_scan
@@ -96,6 +97,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--response-path",
+        metavar="PATH",
+        default=None,
+        dest="response_path",
+        help=(
+            "Dotted/bracket selector pinning where the reply text lives in the "
+            "target's JSON response, e.g. 'choices.0.message.content' or "
+            "'data[0].text'. Use this with --request-template when the target "
+            "returns a non-standard response shape; without it ouija guesses the "
+            "reply field heuristically and may silently read nothing. Integer "
+            "segments are list indices; everything else is a dict key."
+        ),
+    )
+    parser.add_argument(
         "--repeats",
         type=int,
         default=1,
@@ -158,6 +173,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_ERROR
 
+    # Validate response path if provided (fail fast before any request).
+    if args.response_path is not None:
+        try:
+            parse_response_path(args.response_path)
+        except ResponsePathError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+
     # Scope gate — refuse before sending any request.
     try:
         assert_in_scope(args.target, args.scope_file)
@@ -179,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             api_key_env=args.api_key_env,
             concurrency=args.concurrency,
             request_template=request_template,
+            response_path=args.response_path,
             repeats=args.repeats,
         )
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
