@@ -13,8 +13,17 @@ from ouija.canary import CANARY_PLACEHOLDER, make_canary
 from ouija.client import TargetClient
 from ouija.corpus import LoadedSet
 from ouija.detect import detect
-from ouija.models import Finding, ScanResult
+from ouija.models import Finding, ScanResult, ScanSummary
 from ouija.mutate import mutate
+
+# Maps a finding's corpus category back to the --attack-set name it belongs to,
+# so the JSON summary can break findings down per attack set even on an "all" run.
+_CATEGORY_TO_ATTACK_SET = {
+    "prompt_injection": "injection",
+    "sensitive_info_disclosure": "disclosure",
+    "model_dos": "dos",
+    "improper_output_handling": "exfil",
+}
 
 
 class _ProbeResult(NamedTuple):
@@ -122,6 +131,18 @@ async def _run_async(
                 }
             )
             result.findings.append(annotated)
+
+    # --- machine-readable summary roll-up ---
+    per_set: dict[str, int] = {}
+    for finding in result.findings:
+        set_name = _CATEGORY_TO_ATTACK_SET.get(finding.category, finding.category)
+        per_set[set_name] = per_set.get(set_name, 0) + 1
+
+    result.summary = ScanSummary(
+        total=result.patterns_sent,
+        successful=len(result.findings),
+        attack_sets=per_set,
+    )
 
     return result
 

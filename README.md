@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, or `all` (default `all`). |
-| `--format` | `json` or `h1md` (HackerOne markdown). Default `json`. |
+| `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -56,6 +56,70 @@ ouija \
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
+
+## Structured JSON output (`--format json`)
+
+`--format json` (the default) emits a single, machine-readable JSON document on
+stdout — nothing else — so you can pipe it straight into `jq`, `grep`, or a
+report template. Use `--format h1md` instead when you want a ready-to-paste
+HackerOne markdown draft.
+
+```bash
+# Count successful findings
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
+  | jq '.summary.successful'
+
+# List the pattern IDs that fired, with their severity
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
+  | jq -r '.findings[] | "\(.severity)\t\(.pattern_id)\t\(.title)"'
+
+# Pull just the per-attack-set breakdown
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
+  | jq '.summary.attack_sets'
+```
+
+### JSON schema
+
+```jsonc
+{
+  "tool": "ouija",
+  "version": "0.1.3",
+  "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
+  "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
+  "target": "https://api.example.com/v1/chat",
+  "attack_set": "injection",
+  "patterns_sent": 88,
+  "findings": [
+    {
+      "id": "ouija-1a2b3c4d",
+      "category": "prompt_injection",
+      "severity": "high",
+      "title": "Prompt Injection via direct-override",
+      "pattern_id": "inj-001:base",
+      "technique": "direct-override",
+      "owasp": "LLM01:2025 Prompt Injection",
+      "request_prompt": "Ignore all previous instructions ...",
+      "response_excerpt": "Sure! OUIJA_INJECTION_CONFIRMED ...",
+      "evidence": "Response contained the injected marker ...",
+      "confidence": 0.95,
+      "attempts": 1,        // total probes for this pattern/variant (--repeats)
+      "successes": 1,       // how many of those triggered the detector
+      "success_rate": 1.0   // successes / attempts
+    }
+  ],
+  "summary": {
+    "total": 88,            // total probes dispatched (== patterns_sent)
+    "successful": 1,        // number of findings emitted
+    "attack_sets": {        // findings broken down by attack-set name
+      "injection": 1
+    }
+  }
+}
+```
+
+`scan_id` is freshly generated for every run so artifacts can be correlated and
+deduped; `timestamp` is a timezone-aware ISO-8601 instant. The `summary` block
+lets consumers read roll-up totals without iterating the `findings` array.
 
 ## Custom request body shapes (`--request-template`)
 
