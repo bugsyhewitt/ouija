@@ -102,7 +102,15 @@ Improves the *quality* (not quantity) of findings and adds explicit LLM07 covera
 
 ---
 
-## Item 6 — Indirect prompt injection mode (`--inject-via`) (Priority: MEDIUM)
+## Item 6 — Indirect prompt injection mode (`--inject-via`) (Priority: MEDIUM) — ✅ IMPLEMENTED (Rotation 9)
+
+> **Shipped:** `ouija/indirect.py` adds `wrap_indirect()` and the `direct`/`document`/
+> `webpage`/`email` envelopes; `--inject-via` is wired through `cli.py` → `scanner.py`.
+> Envelopes are non-destructive — the attack marker and `{canary}` placeholder are
+> preserved verbatim, so detectors and the per-run exfil canary are unaffected.
+> `--inject-via email` + `--attack-set exfil` reproduces the EchoLeak chain.
+> Covered by `tests/test_indirect.py` (14 tests). README updated.
+
 
 ### What
 Support indirect injection: instead of sending the attack as the user prompt, embed it inside data the endpoint is asked to *process* (a "document to summarize", a "webpage", a "support ticket", a tool-result), modeling the higher-severity injection variant OWASP ranks as the more dangerous form and the exact channel EchoLeak and the Gemini/Copilot bugs exploited.

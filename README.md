@@ -54,6 +54,7 @@ ouija \
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
 | `--response-path` | Dotted/bracket selector pinning where the reply text lives in the response JSON, e.g. `choices.0.message.content`. Use when the target returns a non-standard response shape — see below. |
 | `--mutators` | `surface` (default) or `all`. `all` adds encoding/obfuscation variants that probe representation-level guardrail bypasses — see below. |
+| `--inject-via` | `direct` (default), `document`, `webpage`, or `email`. Delivers the attack indirectly — nested inside data the endpoint processes — instead of as a direct prompt. See below. |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
@@ -216,6 +217,40 @@ destructive encoders (`b64`/`rot13`/`leet`) encode only the surrounding
 instruction and append the marker in cleartext, while `zwsp`/`htmlcomment`
 preserve the full prompt verbatim. This means a finding from an encoding variant
 is real evidence the target decoded and obeyed an obfuscated payload.
+
+## Indirect prompt injection (`--inject-via`)
+
+By default ouija sends each attack as the **user prompt** — a *direct* injection.
+The higher-severity variant OWASP ranks as more dangerous is *indirect* injection:
+the attack rides inside data the endpoint is asked to **process** (a document to
+summarize, a fetched web page, a support email). This is the exact channel behind
+the flagship 2025 production exploits — EchoLeak (CVE-2025-32711) and the
+Gemini/Copilot bugs all delivered their payload through processed content, not a
+direct chat turn.
+
+`--inject-via` nests each attack inside a realistic data envelope before it is
+sent:
+
+| Mode | Channel |
+|------|---------|
+| `direct` | the attack is the user prompt (default, v0.1 behaviour) |
+| `document` | the attack is wrapped as a document the model is asked to summarize |
+| `webpage` | the attack is wrapped in `<html>` as a fetched page to extract |
+| `email` | the attack is wrapped as a support email the model is asked to reply to |
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set injection \
+  --inject-via document
+```
+
+The attack — including any detection marker and any exfil canary — is preserved
+**verbatim** inside the envelope, so every detector and the per-run exfil canary
+keep working unchanged. This composes with every other flag: `--inject-via email`
+combined with `--attack-set exfil` reproduces the EchoLeak chain (indirect
+delivery + markdown-image data exfiltration).
 
 ## Scope-file format
 

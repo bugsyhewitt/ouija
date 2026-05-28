@@ -13,6 +13,7 @@ from ouija.canary import CANARY_PLACEHOLDER, make_canary
 from ouija.client import TargetClient
 from ouija.corpus import LoadedSet
 from ouija.detect import detect
+from ouija.indirect import DEFAULT_INJECT_VIA, wrap_indirect
 from ouija.models import Finding, ScanResult, ScanSummary
 from ouija.mutate import DEFAULT_MUTATOR_SET, mutate
 
@@ -45,6 +46,7 @@ async def _run_async(
     response_path: str | None = None,
     repeats: int = 1,
     mutator_set: str = DEFAULT_MUTATOR_SET,
+    inject_via: str = DEFAULT_INJECT_VIA,
 ) -> ScanResult:
     client = TargetClient(
         target,
@@ -91,6 +93,11 @@ async def _run_async(
         tasks = []
         for pattern in loaded.patterns:
             for variant_id, prompt in mutate(pattern, mutator_set):
+                # Indirect injection: nest the attack inside a data envelope the
+                # endpoint is asked to process. Non-destructive — the marker and
+                # the {canary} placeholder survive verbatim, so canary
+                # substitution (below) and detection are unaffected.
+                prompt = wrap_indirect(prompt, inject_via)
                 if pattern.canary:
                     prompt = prompt.replace(CANARY_PLACEHOLDER, canary.url)
                 for attempt_num in range(repeats):
@@ -158,6 +165,7 @@ def run_scan(
     response_path: str | None = None,
     repeats: int = 1,
     mutator_set: str = DEFAULT_MUTATOR_SET,
+    inject_via: str = DEFAULT_INJECT_VIA,
 ) -> ScanResult:
     """Synchronous entry point that drives the async probe loop."""
     return asyncio.run(
@@ -171,5 +179,6 @@ def run_scan(
             response_path=response_path,
             repeats=repeats,
             mutator_set=mutator_set,
+            inject_via=inject_via,
         )
     )

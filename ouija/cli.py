@@ -18,6 +18,7 @@ import sys
 from ouija import __version__
 from ouija.client import ResponsePathError, parse_response_path
 from ouija.corpus import ATTACK_SETS, load_attack_set
+from ouija.indirect import DEFAULT_INJECT_VIA, INJECT_VIA_MODES
 from ouija.mutate import DEFAULT_MUTATOR_SET, MUTATOR_SETS
 from ouija.report import render
 from ouija.scanner import run_scan
@@ -139,6 +140,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--inject-via",
+        choices=list(INJECT_VIA_MODES),
+        default=DEFAULT_INJECT_VIA,
+        dest="inject_via",
+        help=(
+            "Injection channel. 'direct' (default) sends each attack as the user "
+            "prompt (v0.1 behaviour). 'document', 'webpage', and 'email' instead "
+            "nest the attack inside data the endpoint is asked to process (a "
+            "document to summarize, a fetched web page, a support email) — the "
+            "higher-severity indirect-injection variant behind EchoLeak and the "
+            "Gemini/Copilot 2025 exploits. The attack (and any exfil canary) is "
+            "preserved verbatim inside the envelope, so detection is unchanged."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"ouija {__version__}",
@@ -221,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             response_path=args.response_path,
             repeats=args.repeats,
             mutator_set=args.mutators,
+            inject_via=args.inject_via,
         )
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
         print(f"error: scan failed: {exc}", file=sys.stderr)
