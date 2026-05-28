@@ -24,6 +24,7 @@ _CATEGORY_TO_ATTACK_SET = {
     "sensitive_info_disclosure": "disclosure",
     "model_dos": "dos",
     "improper_output_handling": "exfil",
+    "excessive_agency": "agency",
 }
 
 
