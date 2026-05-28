@@ -41,6 +41,16 @@ _IMPACT = {
         "agent can reach — unauthorized transactions, data destruction, lateral "
         "movement, and exfiltration (OWASP LLM06:2025 Excessive Agency)."
     ),
+    "misinformation": (
+        "The endpoint produces confident, authoritative-sounding content that "
+        "is fabricated — invented citations and DOIs, non-existent CVEs, made-up "
+        "statutes, false medical/dosage facts, or unverifiable figures — without "
+        "any uncertainty hedge or grounding. Users and downstream systems that "
+        "trust the output over-rely on it, leading to flawed decisions, "
+        "reputational and legal exposure, propagation of false claims, and — for "
+        "fabricated package/API references — supply-chain risk such as "
+        "slopsquatting (OWASP LLM09:2025 Misinformation)."
+    ),
 }
 
 _SEVERITY_ORDER = {

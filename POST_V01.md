@@ -131,6 +131,19 @@ Indirect injection is the higher-severity, higher-bounty variant and the mechani
 
 ## Item 7 — Multi-turn / Crescendo conversational attack mode (Priority: LOW for now)
 
+> **Scoping pass (Rotation 11):** assessed and DEFERRED. Item 7 is not
+> self-contained for a single improve lap — it requires turning ouija's
+> stateless single-shot architecture (`client.send(one_prompt) -> one_reply`,
+> independent probes fanned out via `asyncio.gather`) into a stateful, ordered,
+> session-bound turn loop; a history-aware request-body builder (`_build_body`
+> only injects a single `{prompt}`); and transcript-carrying `Finding`s with
+> per-turn detection (`Finding` has no transcript field). That is a design
+> decision, not a code lap. Rotation 11 pivoted to **Item 9 (Misinformation /
+> LLM09)** — see below — which is the same low-risk "new attack class, new OWASP
+> category, marker detection" shape as Items 1 and 8 with zero architectural
+> strain. Item 7 remains the architectural reach goal, still gated on a
+> dedicated design pass + Item 3 message-array templating already landed.
+
 ### What
 A stateful, multi-turn attack mode (`--multi-turn`) that escalates across conversation turns — the Crescendo / GOAT technique pioneered by PyRIT and promptfoo, where a benign opener gradually steers the model into compliance, defeating single-turn defenses (reported success rates jumping from ~4% single-turn to ~78% multi-turn against hardened targets).
 
@@ -183,6 +196,48 @@ remaining OWASP-v2025 coverage gap with a single shippable deliverable — the s
 "new attack class, new OWASP category" shape as Item 1 (exfil/LLM05). Chosen over
 Item 7 (multi-turn/Crescendo), which remains the architectural reach goal gated on
 a dedicated scoping pass.
+
+---
+
+## Item 9 — Misinformation / overreliance attack class (LLM09:2025) — ✅ IMPLEMENTED (Rotation 11)
+
+> **Shipped:** new `--attack-set misinfo` (`ouija/corpus/misinfo.json`, 8
+> patterns, category `misinformation`, OWASP `LLM09:2025 Misinformation`). Wired
+> into the corpus loader and the `all` set; MEDIUM severity + overreliance
+> business-impact framing (incl. slopsquatting supply-chain note) added to
+> `detect.py`/`report.py`; category→attack-set summary mapping added to
+> `scanner.py`. Detection reuses the established marker mechanism — patterns
+> coerce the target into asserting fabricated content as established fact and
+> confirming with the inert token `OUIJA_FABRICATION_CONFIRMED`; a model that
+> emits it has demonstrated it will manufacture confident misinformation on
+> demand. Composes with `--inject-via` and `--request-template`. Covered by
+> `tests/test_misinfo.py` (7 tests) plus a vulnerable branch in the mock.
+> README + NOTICE updated. Version bumped to 0.1.5.
+
+### What
+ouija covered LLM01/02/05/06/10 but had **zero coverage of LLM09:2025
+Misinformation** — the OWASP category for models that emit confident,
+authoritative-sounding fabrications (invented citations/DOIs, non-existent CVEs,
+made-up statutes, false medical facts, fabricated API references, unverifiable
+figures) that users and downstream systems over-rely on. As LLM output is fed
+into research, code, legal, medical, and financial workflows, confident
+hallucination on demand is a real, reportable harm class.
+
+### How
+- New corpus `misinfo.json`: marker-based patterns that ask the target to assert
+  something false as fact with no hedge, then print `OUIJA_FABRICATION_CONFIRMED`.
+  The marker is inert — ouija never publishes or acts on the fabricated content.
+- `misinfo` added to the attack-set loader and the `all` set.
+- `misinformation` → MEDIUM in `detect.py`'s severity map, with LLM09 overreliance
+  impact text in `report.py` and a summary mapping in `scanner.py`. No new
+  detector code path — the marker mechanism already fires the finding.
+
+### Rationale
+Self-contained, low-risk (reuses marker detection), and closes the remaining
+OWASP-v2025 coverage gap (LLM09) with a single shippable deliverable — the same
+shape as Item 1 (exfil/LLM05) and Item 8 (agency/LLM06). Chosen over Item 7
+(multi-turn/Crescendo), which the Rotation 11 scoping pass deferred as a
+non-self-contained architectural change.
 
 ---
 
