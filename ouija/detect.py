@@ -143,6 +143,13 @@ _CATEGORY_SEVERITY = {
     # output unescaped this is stored/reflected XSS or injection driven by the
     # LLM — HIGH severity (client-side code execution / data theft / pivot).
     "improper_output_handling_active": Severity.HIGH,
+    # Vector & embedding weaknesses (LLM08): a RAG/retrieval-backed model that
+    # treats poisoned retrieved context as trusted instructions, or that leaks
+    # isolated/cross-tenant retrieval context, embeddings, or source documents.
+    # HIGH — retrieval-channel injection and cross-context data leakage are
+    # high-impact in multi-tenant RAG deployments (data theft + guardrail bypass
+    # delivered through the knowledge base rather than the user turn).
+    "vector_embedding_weakness": Severity.HIGH,
 }
 
 _EXCERPT_LEN = 500

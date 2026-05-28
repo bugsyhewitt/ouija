@@ -274,6 +274,41 @@ stored-XSS-via-LLM-output class that is a documented, paid bug-bounty finding).
 
 ---
 
+## Item 11 — Vector & embedding weaknesses attack class (LLM08:2025) — ✅ IMPLEMENTED (Rotation 13)
+
+> **Shipped:** new `--attack-set ragpoison` (`ouija/corpus/ragpoison.json`, 8
+> patterns, category `vector_embedding_weakness`, OWASP `LLM08:2025 Vector and
+> Embedding Weaknesses`). Closes the last endpoint-probeable OWASP-v2025
+> coverage gap. Probes RAG/retrieval-backed endpoints for two abuse classes:
+> (1) **retrieval-context poisoning** — the payload masquerades as authoritative
+> retrieved knowledge-base content carrying an embedded instruction (spoofed
+> similarity scores, poisoned citations, injected "system notes" in a document
+> to summarize) that a vulnerable model treats as trusted and obeys — indirect
+> injection through the retrieval channel; and (2) **cross-context / cross-tenant
+> leakage** — coercing the model to disclose isolated context (other tenants'
+> documents, raw retrieved chunks + source metadata, namespace-scoped
+> collections, or private source text recovered from stored embeddings).
+> Detection reuses the established inert-marker mechanism — patterns ask a
+> vulnerable RAG model to confirm with `OUIJA_RAG_POISONED`; no new detector code
+> path. HIGH severity + LLM08 business impact added to `detect.py`/`report.py`;
+> category→attack-set summary mapping added to `scanner.py`; folded into the
+> `all` set. Composes with `--inject-via` and `--request-template`. Covered by
+> `tests/test_ragpoison.py` (7 tests) plus a vulnerable branch in the mock.
+> README + NOTICE updated. Version bumped to 0.1.7.
+
+### Why this over Item 7
+Item 7 (multi-turn/Crescendo) remains the architectural reach goal deferred by
+the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. Item 11 is the same low-risk "new attack class, marker detection,
+new OWASP category" shape as Items 1, 8, 9, and 10, and closes the final
+endpoint-probeable OWASP-v2025 gap (LLM08 Vector & Embedding Weaknesses). The
+remaining v2025 categories — LLM03 Supply Chain and LLM04 Data & Model
+Poisoning — are infrastructure / training-time concerns not reachable by a
+black-box HTTP endpoint fuzzer, so they are out of ouija's probe surface.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.
