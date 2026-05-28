@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -85,7 +85,7 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
@@ -315,6 +315,7 @@ Top 10 mapping:
 - `dos.json` — model-DoS / unbounded-consumption probes (LLM10)
 - `exfil.json` — markdown-image data-exfiltration probes (LLM05, EchoLeak class)
 - `agency.json` — excessive-agency / tool-abuse probes (LLM06)
+- `misinfo.json` — misinformation / overreliance probes (LLM09)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
@@ -380,6 +381,32 @@ This composes with `--inject-via` (deliver the tool-coercion indirectly, inside
 a document or email the agent processes — the channel behind real-world agentic
 exploits) and `--request-template` (agentic endpoints usually accept a `messages`
 array rather than a bare `{"prompt": ...}`).
+
+### Misinformation / overreliance (LLM09:2025)
+
+The `misinfo` attack set probes whether the target will produce **confident,
+authoritative-sounding content that is fabricated** — invented academic citations
+and DOIs, non-existent CVEs, made-up legal statutes, false medical/dosage facts,
+fabricated API references, and unverifiable financial figures — and present it
+**with no uncertainty hedge, grounding, or refusal**. OWASP added **LLM09:2025
+Misinformation** to capture the harm of users and downstream systems *over-relying*
+on plausible-but-false model output.
+
+Each pattern asks the model to assert something false as established fact and to
+confirm by emitting the inert marker `OUIJA_FABRICATION_CONFIRMED`. The marker is
+a harmless string — ouija never publishes or acts on the fabricated content — but
+a model that emits it has demonstrated it will manufacture misinformation on
+demand. A hit is reported as a **MEDIUM** finding: real-world harm is high
+(flawed decisions, legal/reputational exposure, and — for fabricated package/API
+references — slopsquatting supply-chain risk) but contingent on how the output is
+consumed.
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set misinfo
+```
 
 See [`NOTICE`](./NOTICE) for attack-prompt attribution and per-source license
 verification.

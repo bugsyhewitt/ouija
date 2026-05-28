@@ -15,12 +15,14 @@ v0.1 attribution requirement.
 Summary of provenance
 -----------------------------------------------------------------------------
 All prompt STRINGS shipped in ouija/corpus/ (injection.json, disclosure.json,
-dos.json) are ORIGINALLY AUTHORED by the ouija project. They are generic,
-well-known prompt-injection / disclosure / DoS *techniques* (e.g. "ignore
-previous instructions", system-prompt extraction, persona-shift, delimiter
-confusion) rewritten in our own words and instrumented with our own benign
-detection marker (OUIJA_INJECTION_CONFIRMED). No prompt text was copied
-verbatim from any external dataset.
+dos.json, exfil.json, agency.json, misinfo.json) are ORIGINALLY AUTHORED by the
+ouija project. They are generic, well-known LLM-red-teaming *techniques* (e.g.
+"ignore previous instructions", system-prompt extraction, persona-shift,
+delimiter confusion, markdown-image exfiltration, tool-call coercion, fabricated
+citation/overreliance) rewritten in our own words and instrumented with our own
+benign detection markers (OUIJA_INJECTION_CONFIRMED, OUIJA_TOOL_INVOKED,
+OUIJA_FABRICATION_CONFIRMED, and a per-run exfil canary). No prompt text was
+copied verbatim from any external dataset.
 
 The categories of techniques were INFORMED by the public LLM-red-teaming
 literature and datasets listed below. Because no verbatim text was copied,
