@@ -14,7 +14,7 @@ from ouija.client import TargetClient
 from ouija.corpus import LoadedSet
 from ouija.detect import detect
 from ouija.models import Finding, ScanResult, ScanSummary
-from ouija.mutate import mutate
+from ouija.mutate import DEFAULT_MUTATOR_SET, mutate
 
 # Maps a finding's corpus category back to the --attack-set name it belongs to,
 # so the JSON summary can break findings down per attack set even on an "all" run.
@@ -44,6 +44,7 @@ async def _run_async(
     request_template: str | None = None,
     response_path: str | None = None,
     repeats: int = 1,
+    mutator_set: str = DEFAULT_MUTATOR_SET,
 ) -> ScanResult:
     client = TargetClient(
         target,
@@ -89,7 +90,7 @@ async def _run_async(
 
         tasks = []
         for pattern in loaded.patterns:
-            for variant_id, prompt in mutate(pattern):
+            for variant_id, prompt in mutate(pattern, mutator_set):
                 if pattern.canary:
                     prompt = prompt.replace(CANARY_PLACEHOLDER, canary.url)
                 for attempt_num in range(repeats):
@@ -156,6 +157,7 @@ def run_scan(
     request_template: str | None = None,
     response_path: str | None = None,
     repeats: int = 1,
+    mutator_set: str = DEFAULT_MUTATOR_SET,
 ) -> ScanResult:
     """Synchronous entry point that drives the async probe loop."""
     return asyncio.run(
@@ -168,5 +170,6 @@ def run_scan(
             request_template=request_template,
             response_path=response_path,
             repeats=repeats,
+            mutator_set=mutator_set,
         )
     )

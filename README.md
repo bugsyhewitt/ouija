@@ -53,6 +53,7 @@ ouija \
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
 | `--response-path` | Dotted/bracket selector pinning where the reply text lives in the response JSON, e.g. `choices.0.message.content`. Use when the target returns a non-standard response shape — see below. |
+| `--mutators` | `surface` (default) or `all`. `all` adds encoding/obfuscation variants that probe representation-level guardrail bypasses — see below. |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
@@ -180,6 +181,41 @@ If the path is syntactically invalid (empty, unclosed bracket, etc.) ouija exits
 with code `3` before sending any requests. If the path is valid but doesn't
 resolve against a particular response, ouija falls back to the raw response body
 so detection still has something to work with.
+
+## Encoding / obfuscation mutators (`--mutators all`)
+
+By default ouija applies four **surface** mutators to every attack prompt —
+`base` (verbatim), `polite`, `urgent`, and `wrapped` — which vary the *phrasing*
+of a payload. A guardrail that only matches on phrasing can be defeated by
+changing the payload's *representation* instead. Pass `--mutators all` to add an
+encoding/obfuscation family that probes exactly that:
+
+| Variant | Technique |
+|---|---|
+| `b64` | base64-encodes the instruction and asks the model to decode and obey it |
+| `rot13` | ROT13-encodes the instruction |
+| `leet` | leetspeak substitution (`a→4`, `e→3`, …) |
+| `zwsp` | injects zero-width spaces between characters to evade substring filters |
+| `htmlcomment` | smuggles the instruction inside an `<!-- ... -->` HTML comment |
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set injection \
+  --mutators all
+```
+
+`--mutators all` is opt-in because it roughly doubles the number of requests per
+attack pattern (nine variants instead of four). It composes with every other
+flag, including `--repeats`.
+
+**Marker preservation.** Each attack pattern that carries a detection marker
+keeps that marker readable so a vulnerable response still trips the detector:
+destructive encoders (`b64`/`rot13`/`leet`) encode only the surrounding
+instruction and append the marker in cleartext, while `zwsp`/`htmlcomment`
+preserve the full prompt verbatim. This means a finding from an encoding variant
+is real evidence the target decoded and obeyed an obfuscated payload.
 
 ## Scope-file format
 
