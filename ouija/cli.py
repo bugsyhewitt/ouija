@@ -18,6 +18,7 @@ import sys
 from ouija import __version__
 from ouija.client import ResponsePathError, parse_response_path
 from ouija.corpus import ATTACK_SETS, load_attack_set
+from ouija.mutate import DEFAULT_MUTATOR_SET, MUTATOR_SETS
 from ouija.report import render
 from ouija.scanner import run_scan
 from ouija.scope import ScopeError, assert_in_scope
@@ -123,6 +124,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--mutators",
+        choices=list(MUTATOR_SETS),
+        default=DEFAULT_MUTATOR_SET,
+        dest="mutators",
+        help=(
+            "Which mutator family to apply to each attack prompt. 'surface' "
+            "(default) runs the four phrasing variants (base/polite/urgent/"
+            "wrapped). 'all' additionally runs encoding/obfuscation mutators "
+            "(base64, ROT13, leetspeak, zero-width injection, HTML-comment "
+            "smuggling) that probe whether a guardrail can be bypassed by "
+            "changing the payload's representation. 'all' roughly doubles the "
+            "number of requests, so it is opt-in for cost."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"ouija {__version__}",
@@ -204,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             request_template=request_template,
             response_path=args.response_path,
             repeats=args.repeats,
+            mutator_set=args.mutators,
         )
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
         print(f"error: scan failed: {exc}", file=sys.stderr)
