@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -316,6 +316,7 @@ Top 10 mapping:
 - `exfil.json` — markdown-image data-exfiltration probes (LLM05, EchoLeak class)
 - `agency.json` — excessive-agency / tool-abuse probes (LLM06)
 - `misinfo.json` — misinformation / overreliance probes (LLM09)
+- `activecontent.json` — active-content / executable-sink output-handling probes (LLM05, stored-XSS-via-LLM-output class)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
@@ -407,6 +408,37 @@ ouija \
   --scope-file scope.txt \
   --attack-set misinfo
 ```
+
+### Active-content / executable-sink output handling (LLM05:2025)
+
+The `activecontent` attack set is a second, distinct improper-output-handling
+vector from the EchoLeak markdown-image exfil set (`exfil`). It probes whether
+the target will emit **live, executable active content** — a real HTML
+`<script>` tag, an event-handler attribute (`onerror`/`onload`), a
+`javascript:` URI, an `<iframe srcdoc>`, a SQL-injection fragment, or a shell
+command substitution — directly into its output. When a downstream application
+renders or executes that output unescaped, an attacker who controls the prompt
+achieves **stored/reflected XSS, SQL injection, or command injection through the
+LLM**.
+
+Detection is **context-aware**, mirroring the exfil canary: it is *not* enough
+for the inert marker (`OUIJA_XSS_SINK`) to appear anywhere in the reply — a model
+that merely *describes* or code-fences a payload is not a vulnerability. ouija
+only fires when the marker sits **inside a live executable sink** (a real script
+tag, event handler, `javascript:` URI, SQL clause, or `$()` command
+substitution), so a model talking *about* XSS does not false-positive. A hit is
+reported as a **HIGH** finding because the impact is client-side code execution,
+session theft, account takeover, and server-side pivoting.
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set activecontent
+```
+
+This composes with `--inject-via` (deliver the active-content coercion indirectly
+inside a document/email the target processes) and `--request-template`.
 
 See [`NOTICE`](./NOTICE) for attack-prompt attribution and per-source license
 verification.

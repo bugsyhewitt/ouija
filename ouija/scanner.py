@@ -26,6 +26,7 @@ _CATEGORY_TO_ATTACK_SET = {
     "improper_output_handling": "exfil",
     "excessive_agency": "agency",
     "misinformation": "misinfo",
+    "improper_output_handling_active": "activecontent",
 }
 
 
