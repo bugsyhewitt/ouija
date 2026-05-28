@@ -18,7 +18,8 @@ _SETS: dict[str, list[str]] = {
     "disclosure": ["disclosure.json"],
     "dos": ["dos.json"],
     "exfil": ["exfil.json"],
-    "all": ["injection.json", "disclosure.json", "dos.json", "exfil.json"],
+    "agency": ["agency.json"],
+    "all": ["injection.json", "disclosure.json", "dos.json", "exfil.json", "agency.json"],
 }
 
 ATTACK_SETS = tuple(_SETS.keys())

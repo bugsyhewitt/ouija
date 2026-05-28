@@ -32,6 +32,15 @@ _IMPACT = {
         "attacker-controlled host with zero user interaction (EchoLeak / "
         "CVE-2025-32711 'lethal trifecta' class)."
     ),
+    "excessive_agency": (
+        "The endpoint is an agent that can be coerced into invoking privileged "
+        "or destructive tools/actions (sending email, calling state-changing "
+        "APIs, running commands, escalating privileges) without a "
+        "human-in-the-loop confirmation. An attacker who controls the prompt "
+        "controls the agent's actions: the impact is the union of every tool the "
+        "agent can reach — unauthorized transactions, data destruction, lateral "
+        "movement, and exfiltration (OWASP LLM06:2025 Excessive Agency)."
+    ),
 }
 
 _SEVERITY_ORDER = {

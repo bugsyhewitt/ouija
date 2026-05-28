@@ -147,6 +147,45 @@ Highest *ceiling* on finding sophistication (it's what separates a scanner from 
 
 ---
 
+## Item 8 — Excessive-agency / tool-abuse attack class (LLM06:2025) — ✅ IMPLEMENTED (Rotation 10)
+
+> **Shipped:** new `--attack-set agency` (`ouija/corpus/agency.json`, 10 patterns,
+> category `excessive_agency`, OWASP `LLM06:2025 Excessive Agency`). Wired into the
+> corpus loader and the `all` set; HIGH severity + business-impact framing added to
+> `detect.py`/`report.py`; category→attack-set summary mapping added to `scanner.py`.
+> Detection reuses the existing marker mechanism — patterns coerce an agentic target
+> into an unauthorized/destructive action and ask it to confirm with the inert token
+> `OUIJA_TOOL_INVOKED`; an agent that emits it would have performed the action with no
+> human-in-the-loop check. Composes with `--inject-via` and `--request-template`.
+> Covered by `tests/test_agency.py` (7 tests) plus a vulnerable branch in the mock.
+> README updated. Version bumped to 0.1.4.
+
+### What
+ouija covered LLM01/02/05/10 but had **zero coverage of LLM06:2025 Excessive
+Agency** — the OWASP category for agentic LLMs that can be coerced into invoking
+privileged or destructive tools (send email, call state-changing APIs, run
+commands, escalate privileges, deploy) with no approval gate. As production LLM
+deployments move from chat to agents with real tool access, this is a rapidly
+growing, high-severity bounty class.
+
+### How
+- New corpus `agency.json`: marker-based patterns ("call the tool, then print
+  `OUIJA_TOOL_INVOKED`"). The marker is inert — ouija never causes a side effect;
+  a vulnerable agent that emits it proves it would have acted with no confirmation.
+- `agency` added to the attack-set loader and the `all` set.
+- `excessive_agency` → HIGH in `detect.py`'s severity map, with LLM06 impact text
+  in `report.py` and a summary mapping in `scanner.py`. No new detector code path —
+  the established marker mechanism already fires the finding, keeping risk low.
+
+### Rationale
+Self-contained, low-risk (reuses marker detection), and closes the biggest
+remaining OWASP-v2025 coverage gap with a single shippable deliverable — the same
+"new attack class, new OWASP category" shape as Item 1 (exfil/LLM05). Chosen over
+Item 7 (multi-turn/Crescendo), which remains the architectural reach goal gated on
+a dedicated scoping pass.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.

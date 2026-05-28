@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -85,7 +85,7 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
@@ -314,6 +314,7 @@ Top 10 mapping:
 - `disclosure.json` — 12 sensitive-information-disclosure probes (LLM02)
 - `dos.json` — model-DoS / unbounded-consumption probes (LLM10)
 - `exfil.json` — markdown-image data-exfiltration probes (LLM05, EchoLeak class)
+- `agency.json` — excessive-agency / tool-abuse probes (LLM06)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
@@ -350,6 +351,35 @@ reported, and a **benign-mention guard** suppresses responses that merely
 prompt…"`). Confidence is **derived from the corroborating evidence** instead of
 a flat default, so triagers get an honest reliability signal and fewer noisy,
 N/A-closed reports.
+
+### Excessive agency / tool abuse (LLM06:2025)
+
+The `agency` attack set targets **agentic** endpoints — LLMs wired to tools,
+functions, or APIs that can take real actions (send email, call a state-changing
+endpoint, run a command, escalate a role, write a file). OWASP added **LLM06:2025
+Excessive Agency** to capture the class of bugs where an attacker who controls
+the prompt can coerce the agent into invoking a privileged or destructive action
+**without a human-in-the-loop confirmation**.
+
+Each pattern asks the agent to perform an unauthorized action (refund a payment,
+delete a record, POST data to an attacker host, grant admin, deploy to
+production) and to confirm by emitting an inert marker token,
+`OUIJA_TOOL_INVOKED`. The marker is a harmless string — ouija never causes a real
+side effect — but an agent that emits it has demonstrated it would have carried
+out the action with no approval gate. A hit is reported as a **HIGH** finding
+because the blast radius is the union of every tool the agent can reach.
+
+```bash
+ouija \
+  --target https://api.example.com/agent \
+  --scope-file scope.txt \
+  --attack-set agency
+```
+
+This composes with `--inject-via` (deliver the tool-coercion indirectly, inside
+a document or email the agent processes — the channel behind real-world agentic
+exploits) and `--request-template` (agentic endpoints usually accept a `messages`
+array rather than a bare `{"prompt": ...}`).
 
 See [`NOTICE`](./NOTICE) for attack-prompt attribution and per-source license
 verification.

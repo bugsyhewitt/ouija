@@ -128,6 +128,10 @@ _CATEGORY_SEVERITY = {
     # EchoLeak-class data exfiltration is the flagship CRITICAL output-handling
     # finding (CVE-2025-32711, CVSS 9.6).
     "improper_output_handling": Severity.CRITICAL,
+    # Excessive agency (LLM06): an agent that performs a privileged or
+    # destructive action with no human-in-the-loop check is HIGH severity — the
+    # blast radius is the union of every tool the agent can reach.
+    "excessive_agency": Severity.HIGH,
 }
 
 _EXCERPT_LEN = 500
