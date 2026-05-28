@@ -95,7 +95,32 @@ def _extract_prompt(body: bytes) -> str:
     return ""
 
 
-def _make_handler(reply_fn):
+def _default_response_shape(reply: str) -> dict:
+    """ouija's default/heuristic-friendly response: {"reply": "..."}."""
+    return {"reply": reply}
+
+
+def openai_response_shape(reply: str) -> dict:
+    """OpenAI chat-completions style response.
+
+    The reply text lives at ``choices[0].message.content`` and there is a
+    decoy ``choices[0].message.refusal`` field, so a tool that does NOT pin the
+    path correctly could read the wrong value. Used to exercise --response-path.
+    """
+    return {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": reply, "refusal": None},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+def _make_handler(reply_fn, response_shape):
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # silence test noise
             pass
@@ -105,7 +130,7 @@ def _make_handler(reply_fn):
             body = self.rfile.read(length) if length else b"{}"
             prompt = _extract_prompt(body)
             reply = reply_fn(prompt)
-            payload = json.dumps({"reply": reply}).encode("utf-8")
+            payload = json.dumps(response_shape(reply)).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
@@ -125,15 +150,16 @@ class MockLLM:
             not false-positive on well-behaved targets).
     """
 
-    def __init__(self, safe: bool = False) -> None:
+    def __init__(self, safe: bool = False, response_shape=None) -> None:
         # Pick an ephemeral port explicitly, then hand it to the HTTP server.
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         probe.bind(("", 0))
         self.port = probe.getsockname()[1]
         probe.close()
         reply_fn = _safe_reply if safe else _vulnerable_reply
+        shape = response_shape or _default_response_shape
         self._server = ThreadingHTTPServer(
-            ("127.0.0.1", self.port), _make_handler(reply_fn)
+            ("127.0.0.1", self.port), _make_handler(reply_fn, shape)
         )
         self._thread: threading.Thread | None = None
 

@@ -33,9 +33,15 @@ async def _run_async(
     api_key_env: str | None,
     concurrency: int,
     request_template: str | None = None,
+    response_path: str | None = None,
     repeats: int = 1,
 ) -> ScanResult:
-    client = TargetClient(target, api_key_env=api_key_env, request_template=request_template)
+    client = TargetClient(
+        target,
+        api_key_env=api_key_env,
+        request_template=request_template,
+        response_path=response_path,
+    )
     result = ScanResult(
         version=__version__,
         target=target,
@@ -127,6 +133,7 @@ def run_scan(
     api_key_env: str | None = None,
     concurrency: int = 5,
     request_template: str | None = None,
+    response_path: str | None = None,
     repeats: int = 1,
 ) -> ScanResult:
     """Synchronous entry point that drives the async probe loop."""
@@ -138,6 +145,7 @@ def run_scan(
             api_key_env,
             concurrency,
             request_template=request_template,
+            response_path=response_path,
             repeats=repeats,
         )
     )
