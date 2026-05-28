@@ -41,6 +41,16 @@ _IMPACT = {
         "agent can reach — unauthorized transactions, data destruction, lateral "
         "movement, and exfiltration (OWASP LLM06:2025 Excessive Agency)."
     ),
+    "improper_output_handling_active": (
+        "The endpoint emits live, executable active content (HTML <script> "
+        "tags, event-handler attributes, javascript: URIs, SQL fragments, or "
+        "shell command strings) directly into its output. When a downstream "
+        "application renders or executes that output without sanitization, an "
+        "attacker who controls the prompt achieves stored or reflected XSS, SQL "
+        "injection, or command injection through the LLM — enabling session "
+        "theft, account takeover, data exfiltration, and server-side pivoting "
+        "(OWASP LLM05:2025 Improper Output Handling)."
+    ),
     "misinformation": (
         "The endpoint produces confident, authoritative-sounding content that "
         "is fabricated — invented citations and DOIs, non-existent CVEs, made-up "

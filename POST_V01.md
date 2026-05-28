@@ -241,6 +241,39 @@ non-self-contained architectural change.
 
 ---
 
+## Item 10 — Active-content / executable-sink output handling (LLM05:2025) — ✅ IMPLEMENTED (Rotation 12)
+
+> **Shipped:** new `--attack-set activecontent`
+> (`ouija/corpus/activecontent.json`, 8 patterns, category
+> `improper_output_handling_active`, OWASP `LLM05:2025 Improper Output
+> Handling`). This is a SECOND, distinct LLM05 vector from the EchoLeak
+> markdown-image exfil set (`exfil`): instead of exfiltration via an
+> auto-fetched image, it probes whether the target emits *live executable
+> content* — a real `<script>` tag, an event-handler attribute, a
+> `javascript:` URI, an `<iframe srcdoc>`, a SQL-injection fragment, or a `$()`
+> shell substitution — that a naive downstream consumer would render/execute
+> (stored/reflected-XSS-via-LLM-output, SQLi, and command-injection classes).
+> Detection is **context-aware** (a new `_active_sink_rendered` branch in
+> `detect.py`, modelled on `_canary_rendered`): the inert marker
+> (`OUIJA_XSS_SINK`) must sit *inside* a live sink, so a model that merely
+> describes or code-fences a payload does not false-positive. HIGH severity +
+> LLM05 active-content business impact added to `detect.py`/`report.py`;
+> category→attack-set summary mapping added to `scanner.py`; folded into the
+> `all` set. Composes with `--inject-via` and `--request-template`. Covered by
+> `tests/test_activecontent.py` (9 tests) plus a vulnerable branch in the mock.
+> README + NOTICE updated. Version bumped to 0.1.6.
+
+### Why this over Item 7
+Item 7 (multi-turn/Crescendo) remains the architectural reach goal deferred by
+the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. Item 10 is the same low-risk "new attack class, context-aware
+marker detection, new OWASP sub-vector" shape as Items 1, 8, and 9, and closes
+the remaining LLM05 coverage gap (active-content output handling, the
+stored-XSS-via-LLM-output class that is a documented, paid bug-bounty finding).
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.

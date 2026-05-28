@@ -20,6 +20,7 @@ _SETS: dict[str, list[str]] = {
     "exfil": ["exfil.json"],
     "agency": ["agency.json"],
     "misinfo": ["misinfo.json"],
+    "activecontent": ["activecontent.json"],
     "all": [
         "injection.json",
         "disclosure.json",
@@ -27,6 +28,7 @@ _SETS: dict[str, list[str]] = {
         "exfil.json",
         "agency.json",
         "misinfo.json",
+        "activecontent.json",
     ],
 }
 
