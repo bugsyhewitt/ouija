@@ -6,10 +6,22 @@ us free validation of the structured response we parse from target endpoints.]
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+
+def _new_scan_id() -> str:
+    """A short, unique identifier for a single scan run."""
+    return uuid.uuid4().hex
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string with a trailing Z."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 class Severity(str, Enum):
@@ -58,12 +70,31 @@ class Finding(BaseModel):
     success_rate: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
+class ScanSummary(BaseModel):
+    """Machine-readable roll-up of a scan, for jq / report templates.
+
+    Kept separate from the per-finding list so consumers can read totals
+    without iterating every finding (e.g. ``jq '.summary.successful'``).
+    """
+
+    total: int = 0
+    successful: int = 0
+    # attack_set name -> number of findings attributed to it.
+    attack_sets: dict[str, int] = Field(default_factory=dict)
+
+
 class ScanResult(BaseModel):
     """Top-level result emitted as JSON."""
 
     tool: str = "ouija"
     version: str
+    # Unique per-run identifier — lets downstream tooling correlate, dedupe,
+    # and name report artifacts deterministically.
+    scan_id: str = Field(default_factory=_new_scan_id)
+    # ISO-8601 UTC timestamp of when the scan result was constructed.
+    timestamp: str = Field(default_factory=_utc_now_iso)
     target: str
     attack_set: str
     patterns_sent: int
     findings: list[Finding] = Field(default_factory=list)
+    summary: ScanSummary = Field(default_factory=ScanSummary)
