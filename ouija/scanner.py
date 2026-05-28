@@ -27,6 +27,7 @@ _CATEGORY_TO_ATTACK_SET = {
     "excessive_agency": "agency",
     "misinformation": "misinfo",
     "improper_output_handling_active": "activecontent",
+    "vector_embedding_weakness": "ragpoison",
 }
 
 

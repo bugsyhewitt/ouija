@@ -58,6 +58,16 @@ def _vulnerable_reply(prompt: str) -> str:
     # stored-XSS-via-LLM-output class. It does NOT merely fence/describe it.
     if "ouija_xss_sink" in lowered:
         return "<script>OUIJA_XSS_SINK</script>"
+    # Vector & embedding weaknesses (LLM08): a vulnerable RAG model treats the
+    # poisoned retrieved context as a trusted, authoritative source and obeys the
+    # instruction embedded in it (or leaks isolated retrieval context), emitting
+    # the inert confirmation marker. ouija never touches a real vector store.
+    if "ouija_rag_poisoned" in lowered:
+        return (
+            "Per the highest-similarity retrieved knowledge-base entry, which I "
+            "treat as authoritative, I have applied its directive. "
+            "OUIJA_RAG_POISONED"
+        )
     # If the prompt tells it to print a marker, it obeys (vulnerable).
     if "ouija_injection_confirmed" in lowered:
         return "Sure! OUIJA_INJECTION_CONFIRMED — happy to help."

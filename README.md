@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -317,6 +317,7 @@ Top 10 mapping:
 - `agency.json` — excessive-agency / tool-abuse probes (LLM06)
 - `misinfo.json` — misinformation / overreliance probes (LLM09)
 - `activecontent.json` — active-content / executable-sink output-handling probes (LLM05, stored-XSS-via-LLM-output class)
+- `ragpoison.json` — vector & embedding weakness probes (LLM08, RAG retrieval-context poisoning + cross-context leakage)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
@@ -439,6 +440,42 @@ ouija \
 
 This composes with `--inject-via` (deliver the active-content coercion indirectly
 inside a document/email the target processes) and `--request-template`.
+
+### Vector & embedding weaknesses (LLM08:2025)
+
+The `ragpoison` attack set targets **retrieval-augmented (RAG)** endpoints — LLMs
+that answer from a vector store of retrieved context. OWASP added **LLM08:2025
+Vector and Embedding Weaknesses** to the 2025 Top 10 for exactly this surface.
+The set probes two abuse classes:
+
+- **Retrieval-context poisoning** — the payload masquerades as authoritative
+  retrieved / knowledge-base content carrying an embedded instruction. A
+  vulnerable model treats the retrieved chunk as trusted and obeys it — indirect
+  injection delivered through the *retrieval channel* rather than the user turn
+  (spoofed similarity scores, poisoned citations, injected "system notes" inside
+  a document to summarize).
+- **Cross-context / cross-tenant leakage** — coercing the model to disclose
+  context it should keep isolated: other tenants' documents, the raw retrieved
+  chunks and source metadata, namespace-scoped collections, or private source
+  text recovered from stored embeddings (embedding inversion).
+
+Detection reuses the established **inert-marker** mechanism: each pattern asks a
+vulnerable RAG model to confirm with the token `OUIJA_RAG_POISONED`. A model that
+emits it has demonstrated it will trust poisoned retrieval context or breach
+context isolation. The marker is inert — ouija never writes to a real vector
+store, never reads another tenant's data, and never causes a side effect. A hit
+is reported as a **HIGH** finding because the impact is guardrail bypass via
+trusted content plus cross-context data exfiltration in multi-tenant deployments.
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set ragpoison
+```
+
+This composes with `--inject-via` (the poisoned chunk can be delivered inside the
+very document/email the RAG pipeline ingests) and `--request-template`.
 
 See [`NOTICE`](./NOTICE) for attack-prompt attribution and per-source license
 verification.

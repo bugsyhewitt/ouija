@@ -61,6 +61,17 @@ _IMPACT = {
         "fabricated package/API references — supply-chain risk such as "
         "slopsquatting (OWASP LLM09:2025 Misinformation)."
     ),
+    "vector_embedding_weakness": (
+        "The endpoint is backed by a vector store / RAG pipeline that fails to "
+        "isolate or validate its retrieval context. An attacker can poison the "
+        "knowledge base so retrieved chunks carry instructions the model obeys "
+        "(indirect injection through the retrieval channel), or coerce the model "
+        "into leaking isolated context — other tenants' documents, raw retrieved "
+        "chunks, source metadata, or data recovered from stored embeddings. The "
+        "impact is guardrail bypass delivered via trusted content and "
+        "cross-context data exfiltration in multi-tenant deployments (OWASP "
+        "LLM08:2025 Vector and Embedding Weaknesses)."
+    ),
 }
 
 _SEVERITY_ORDER = {
