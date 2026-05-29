@@ -57,6 +57,8 @@ ouija \
 | `--inject-via` | `direct` (default), `document`, `webpage`, or `email`. Delivers the attack indirectly — nested inside data the endpoint processes — instead of as a direct prompt. See below. |
 | `--multi-turn` | Run scripted **Crescendo** conversational attacks that escalate across several turns instead of the stateless single-shot probes. See below. |
 | `--fail-on` | CI/CD gating. Exit `1` when at least one finding is at or above this severity: `info`, `low`, `medium`, `high`, `critical`, or `none` (default). `none` keeps the historical exit-`0`-on-completion behaviour. See [Exit codes & CI gating](#exit-codes--cicd-gating). |
+| `--baseline` | Path to a baseline file of already-triaged finding IDs. Matching findings are suppressed from the report **and** the `--fail-on` gate, so reruns surface only what is new. See [Baselines](#baselines---baseline----write-baseline). |
+| `--write-baseline` | Path to write this run's finding IDs to, for use as a future `--baseline`. See [Baselines](#baselines---baseline----write-baseline). |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
@@ -145,6 +147,58 @@ time you scan**, so you can
 
 Because the target host is excluded, a finding is comparable across environments
 (the same prompt-injection bug carries the same `id` in staging and production).
+
+## Baselines (`--baseline` / `--write-baseline`)
+
+You re-run ouija against the same endpoint constantly — after filing a report,
+while waiting on triage, after a vendor claims a fix. A **baseline** is a
+snapshot of the finding IDs you have already triaged. On a later run, ouija
+*suppresses* any finding whose [stable ID](#stable-finding-ids) is in the
+baseline: it is dropped from the report **and** excluded from the `--fail-on`
+gate. The rerun shows — and your pipeline breaks on — only what is genuinely
+new.
+
+Snapshot the findings you have accepted:
+
+```bash
+# First run: scan, save the report, AND snapshot the finding IDs.
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --write-baseline ouija-baseline.txt
+```
+
+Then suppress them on every later run:
+
+```bash
+# Later runs only surface NEW findings; previously-triaged ones are hidden.
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --baseline ouija-baseline.txt \
+      --fail-on high          # breaks the build only on a NEW high/critical
+```
+
+When a new finding does appear and you accept it, refresh the baseline by
+chaining both flags — the new file is the old accepted set plus what you just
+triaged:
+
+```bash
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
+      --baseline ouija-baseline.txt --write-baseline ouija-baseline.txt
+```
+
+**Baseline file format.** One finding ID per line; blank lines and `#` comments
+(including inline ones) are ignored. A saved `ouija --format json` report is
+*also* accepted directly as a baseline — its `findings[].id` values are
+extracted — so you can feed an archived report straight back in:
+
+```bash
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
+      --baseline last-accepted-report.json
+```
+
+Suppression and write counts are printed to **stderr** (so they never pollute
+the JSON/SARIF report on stdout). A missing or malformed `--baseline` file
+exits `3` *before* any request is sent.
 
 ## Custom request body shapes (`--request-template`)
 

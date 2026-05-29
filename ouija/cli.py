@@ -17,6 +17,12 @@ import json
 import sys
 
 from ouija import __version__
+from ouija.baseline import (
+    BaselineError,
+    apply_baseline,
+    load_baseline,
+    write_baseline,
+)
 from ouija.client import ResponsePathError, parse_response_path
 from ouija.corpus import ATTACK_SETS, load_attack_set
 from ouija.gate import FAIL_ON_CHOICES, FAIL_ON_NONE, gate_exit_code
@@ -201,6 +207,32 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--baseline",
+        metavar="PATH",
+        default=None,
+        dest="baseline",
+        help=(
+            "Suppress already-triaged findings. PATH is a baseline file (one "
+            "finding ID per line, '#' comments allowed, or a saved 'ouija "
+            "--format json' report). Any finding whose stable ID is in the "
+            "baseline is dropped from the report AND excluded from the "
+            "--fail-on gate, so a rerun surfaces — and a pipeline breaks on — "
+            "only genuinely new findings. Create one with --write-baseline."
+        ),
+    )
+    parser.add_argument(
+        "--write-baseline",
+        metavar="PATH",
+        default=None,
+        dest="write_baseline",
+        help=(
+            "Snapshot this run's finding IDs to PATH (one per line) for use as "
+            "a --baseline on later runs. Writes after suppression, so chaining "
+            "--baseline OLD --write-baseline NEW yields the new accepted set. "
+            "The report is still printed and the exit code is unchanged."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"ouija {__version__}",
@@ -259,6 +291,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_ERROR
 
+    # Load the baseline (if any) before scanning so a bad path fails fast,
+    # before any request is sent.
+    baseline_ids: set[str] = set()
+    if args.baseline is not None:
+        try:
+            baseline_ids = load_baseline(args.baseline)
+        except BaselineError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+
     # Scope gate — refuse before sending any request.
     try:
         assert_in_scope(args.target, args.scope_file)
@@ -289,6 +331,30 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
         print(f"error: scan failed: {exc}", file=sys.stderr)
         return EXIT_ERROR
+
+    # Suppress baselined (already-triaged) findings before rendering/gating, so
+    # the report and the --fail-on gate both see only genuinely new findings.
+    if baseline_ids:
+        outcome = apply_baseline(result, baseline_ids)
+        result = outcome.result
+        if outcome.suppressed:
+            print(
+                f"suppressed {outcome.suppressed} finding(s) via baseline "
+                f"{args.baseline}",
+                file=sys.stderr,
+            )
+
+    # Snapshot the (post-suppression) finding IDs for use as a future baseline.
+    if args.write_baseline is not None:
+        try:
+            count = write_baseline(result, args.write_baseline)
+        except BaselineError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        print(
+            f"wrote {count} finding ID(s) to baseline {args.write_baseline}",
+            file=sys.stderr,
+        )
 
     print(render(result, args.fmt))
     return gate_exit_code(

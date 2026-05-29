@@ -554,6 +554,46 @@ endpoint fuzzer's probe surface, so Item 7 remains the next reach goal.
 
 ---
 
+## Item 17 — Finding baseline / suppression (`--baseline` / `--write-baseline`) — ✅ IMPLEMENTED (Rotation 24)
+
+> **Shipped:** a baseline / suppression workflow built directly on the
+> deterministic [stable finding IDs](README.md#stable-finding-ids) that landed in
+> the previous rotation (#20). New module `ouija/baseline.py` plus two CLI flags:
+> `--write-baseline PATH` snapshots the current run's finding IDs (one per line,
+> de-duped and sorted, with a provenance header comment), and `--baseline PATH`
+> reads such a file on a later run and **suppresses** any finding whose ID is in
+> it — dropping it from the rendered report **and** excluding it from the
+> `--fail-on` gate, so a rerun surfaces (and a CI pipeline breaks on) only
+> genuinely new findings. Suppression is a pure function over `ScanResult`
+> (`apply_baseline`) that recomputes the summary roll-up over surviving findings
+> while preserving `patterns_sent`; the input result is left untouched. The
+> baseline file format is forgiving: one ID per line with `#` comments (inline
+> too) and blank lines ignored, OR a saved `ouija --format json` report fed back
+> in directly (its `findings[].id` values are extracted). Status/suppression
+> counts print to **stderr** so the JSON/SARIF report on stdout stays clean; a
+> missing or malformed `--baseline` exits `3` *before* any request is sent.
+> Covered by `tests/test_baseline.py` (14 tests: line- and JSON-format loading,
+> missing/malformed-file errors, suppression purity/no-mutation, roundtrip,
+> de-dupe, and end-to-end write→baseline-suppresses-everything,
+> baseline-clears-the-`--fail-on`-gate, h1md-reflects-suppression, and
+> help-lists-flags). README + version bumped to 0.1.17. Does not touch the
+> scope-gate contract or any attack corpus.
+
+### Why this over Item 7
+Item 7 (multi-turn / Crescendo) shipped in Rotation 9. The remaining roadmap
+items are new attack *classes*; this rotation instead closes a **workflow** gap
+that the deterministic-finding-ID work (#20) newly made possible. A bug-bounty
+hunter re-runs ouija against the same endpoint constantly — after filing,
+during triage, after a claimed fix — and without suppression every rerun
+re-surfaces already-triaged findings, drowning new ones and (with `--fail-on`)
+breaking CI on an already-accepted bug. Baselining is the standard
+noise-control primitive every mature scanner ships (gitleaks `--baseline-path`,
+semgrep `--baseline-commit`, trivy `.trivyignore`); ouija now has the LLM-fuzzer
+equivalent, keyed on its stable IDs. Self-contained, no new dependency, no
+architecture change.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.
