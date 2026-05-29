@@ -30,6 +30,7 @@ _CATEGORY_TO_ATTACK_SET = {
     "vector_embedding_weakness": "ragpoison",
     "safety_guardrail_bypass": "safetybypass",
     "pii_disclosure": "pii",
+    "supply_chain_poisoning": "supplychain",
 }
 
 

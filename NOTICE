@@ -16,7 +16,8 @@ Summary of provenance
 -----------------------------------------------------------------------------
 All prompt STRINGS shipped in ouija/corpus/ (injection.json, disclosure.json,
 dos.json, exfil.json, agency.json, misinfo.json, activecontent.json,
-ragpoison.json, safetybypass.json, pii.json) are ORIGINALLY AUTHORED by the
+ragpoison.json, safetybypass.json, pii.json, supplychain.json) are ORIGINALLY
+AUTHORED by the
 ouija project. They are generic, well-known LLM-red-teaming *techniques* (e.g.
 "ignore previous instructions", system-prompt extraction, persona-shift,
 delimiter confusion, markdown-image exfiltration, tool-call coercion,
@@ -26,8 +27,10 @@ retrieval-context poisoning / cross-context-and-embedding leakage,
 safety-guardrail / refusal-suppression jailbreaks — the DAN / "do-anything-now"
 class — and PII / memorized-data regurgitation, which uses only synthetic,
 non-routable test-vector data: an .invalid-TLD email, the reserved
-4111-1111-1111-1111 test card, and the 219-09-9999 reserved SSN) rewritten in
-our own words and
+4111-1111-1111-1111 test card, and the 219-09-9999 reserved SSN — and
+supply-chain package-recommendation poisoning / slopsquatting, which plants only
+inert, reserved-flavoured `ouija-pkg-` package tokens that name no real package)
+rewritten in our own words and
 instrumented with our own benign detection markers (OUIJA_INJECTION_CONFIRMED,
 OUIJA_TOOL_INVOKED, OUIJA_FABRICATION_CONFIRMED, OUIJA_XSS_SINK,
 OUIJA_RAG_POISONED, OUIJA_JAILBREAK_CONFIRMED, and a per-run exfil canary). No

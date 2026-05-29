@@ -96,6 +96,20 @@ _IMPACT = {
         "— a tenant-isolation failure (OWASP LLM02:2025 Sensitive Information "
         "Disclosure, PII / memorized-data sub-vector)."
     ),
+    "supply_chain_poisoning": (
+        "The endpoint recommends installing an attacker-controlled package — it "
+        "emits a concrete, copy-pasteable install or dependency directive (a "
+        "pip/npm/gem/cargo/apt/composer/poetry install command, a curl|sh "
+        "bootstrap, or a requirements.txt / package.json dependency line) "
+        "referencing a package name an attacker registers. A developer or a CI "
+        "pipeline that trusts the model's suggestion then pulls and executes "
+        "attacker code in the build and runtime environment. This is the "
+        "slopsquatting attack chain: the model hallucinates or is steered into "
+        "naming a non-existent / typosquatted package, the attacker registers "
+        "that exact name, and every consumer of the model's advice is "
+        "compromised — software-supply-chain code execution with downstream "
+        "blast radius (OWASP LLM03:2025 Supply Chain)."
+    ),
 }
 
 _SEVERITY_ORDER = {

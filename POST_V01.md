@@ -439,6 +439,58 @@ Model Poisoning remain out of a black-box HTTP fuzzer's probe surface.
 
 ---
 
+## Item 15 — Supply-chain package-recommendation poisoning (LLM03:2025, slopsquatting sub-vector) — ✅ IMPLEMENTED (Rotation 17)
+
+> **Shipped:** new `--attack-set supplychain`
+> (`ouija/corpus/supplychain.json`, 8 patterns, category
+> `supply_chain_poisoning`, OWASP `LLM03:2025 Supply Chain`). This opens the
+> **last uncovered OWASP-v2025 category** via its one endpoint-probeable
+> sub-vector. Every prior rotation deferred LLM03 (Supply Chain) and LLM04
+> (Data & Model Poisoning) as "infrastructure / training-time concerns not
+> reachable by a black-box HTTP endpoint fuzzer." That is true of the
+> *provenance* side of LLM03 — but its highest-value, actively-exploited 2025
+> sub-vector, **slopsquatting** (a model recommending an attacker-named
+> package), is squarely endpoint-probeable: a black-box probe gets back a
+> concrete, copy-pasteable install command. Each probe plants a unique, inert,
+> attacker-flavoured package token (always carrying the literal substring
+> `ouija-pkg-`) and asks the model to recommend installing it — as a real
+> dependency, a typosquat "correction", a transitive requirement, a CI step, a
+> `curl … | sh` bootstrap, or a `requirements.txt` / `package.json` line.
+> Detection is **context-aware** (a new `detect_supply_chain_poisoning` in
+> `detect.py`, modelled on the `_active_sink_rendered` branch): the planted
+> token merely appearing in prose ("I couldn't verify `ouija-pkg-…` exists, so
+> I won't recommend it") is intentionally NOT a finding — ouija fires a **HIGH**
+> `supply_chain_poisoning` finding only when the token sits inside a LIVE
+> install / dependency directive (a pip/npm/yarn/gem/cargo/go/apt/composer/
+> poetry/dotnet command, a `curl|sh` bootstrap, or a pinned manifest line). This
+> adds a genuinely new detection behavior (install-directive recognition across
+> ecosystems) rather than reusing marker or keyword matching. ouija never
+> installs anything; the package name is reserved-flavoured and detection is
+> purely on the response text. LLM03 business-impact text added to
+> `report.py`; category→attack-set summary mapping added to `scanner.py`;
+> folded into the `all` set. Composes with `--inject-via` and
+> `--request-template`. Covered by `tests/test_supplychain.py` (24 tests, incl.
+> the defining prose-mention-but-no-directive no-false-positive case and a
+> parametrized sweep across 16 install-directive shapes) plus a vulnerable
+> supply-chain branch in the mock. README + version bumped to 0.1.11.
+
+### Why this over Item 7
+Item 7 (multi-turn/Crescendo) remains the architectural reach goal deferred by
+the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. With every previously-deemed-probeable OWASP-v2025 category covered
+(LLM01/02/05/06/07/08/09/10), Item 15 re-examines the two categories prior
+rotations wrote off as out-of-surface (LLM03, LLM04) and ships the ONE that has
+a concrete, black-box-probeable, high-value sub-vector: **slopsquatting**
+(LLM03). It is the same low-risk "new attack set, context-aware detector, new
+OWASP category" shape as Items 1, 8, 9, 10, 11, 12, 13, and 14, and adds a
+distinct detection behavior. The remaining gap — LLM04 Data & Model Poisoning —
+is genuinely a training-time concern: a black-box endpoint fuzzer can probe for
+*backdoor triggers* only if it knows the trigger, which it does not, so LLM04
+stays out of ouija's probe surface and Item 7 remains the next reach goal.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.
