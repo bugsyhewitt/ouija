@@ -28,6 +28,7 @@ from ouija.corpus import ATTACK_SETS, load_attack_set
 from ouija.gate import FAIL_ON_CHOICES, FAIL_ON_NONE, gate_exit_code
 from ouija.indirect import DEFAULT_INJECT_VIA, INJECT_VIA_MODES
 from ouija.mutate import DEFAULT_MUTATOR_SET, MUTATOR_SETS
+from ouija.notify import NotifyError, send_notification, validate_notify_url
 from ouija.plan import build_plan, render_plan
 from ouija.report import render
 from ouija.scanner import run_scan
@@ -234,6 +235,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--notify",
+        metavar="URL",
+        default=None,
+        dest="notify",
+        help=(
+            "Webhook alerting: after the scan completes, POST a compact JSON "
+            "summary of the run (target, request count, finding count, top "
+            "severity, and a per-finding id/severity/category/title roll-up) to "
+            "this http(s) URL — e.g. a Slack/Teams incoming-webhook proxy, a "
+            "ticketing intake, or a CI fan-out endpoint. The POST carries a "
+            "bounded digest, NOT the full report (no raw prompts, response "
+            "excerpts, or transcripts), so attack payloads and exfil canaries "
+            "are not spilled into a chat channel — read the --format json report "
+            "for the evidence. Delivery is best-effort and NON-fatal: a bad URL, "
+            "timeout, or non-2xx response prints a warning to stderr but does NOT "
+            "change the exit code (the --fail-on gate remains the build verdict). "
+            "Skipped entirely in --plan mode (no scan, nothing to notify)."
+        ),
+    )
+    parser.add_argument(
         "--plan",
         action="store_true",
         dest="plan",
@@ -308,6 +329,15 @@ def main(argv: list[str] | None = None) -> int:
         try:
             parse_response_path(args.response_path)
         except ResponsePathError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+
+    # Validate the notify webhook URL (if any) before scanning so a malformed
+    # URL fails fast — before spending any request against the target.
+    if args.notify is not None:
+        try:
+            validate_notify_url(args.notify)
+        except NotifyError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_ERROR
 
@@ -394,6 +424,24 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(render(result, args.fmt))
+
+    # Fire the webhook (if configured) on the post-suppression result, so the
+    # alert reflects exactly what the operator sees in the report. Best-effort
+    # and NON-fatal: a delivery failure is a side-channel problem and must not
+    # change the security exit code that the --fail-on gate computes below.
+    if args.notify is not None:
+        try:
+            status = send_notification(args.notify, result)
+            print(
+                f"notified {args.notify} (HTTP {status})",
+                file=sys.stderr,
+            )
+        except Exception as exc:  # noqa: BLE001 — webhook is a non-fatal side channel
+            print(
+                f"warning: --notify webhook delivery failed: {exc}",
+                file=sys.stderr,
+            )
+
     return gate_exit_code(
         result,
         args.fail_on,
