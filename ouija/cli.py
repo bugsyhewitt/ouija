@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "h1md", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -83,7 +83,11 @@ def build_parser() -> argparse.ArgumentParser:
             "record per line: a 'scan' header, one 'finding' per line, then a "
             "'summary' footer, each tagged with a \"record\" discriminator — so a "
             "log shipper, `jq -c`, or a `while read` loop can consume each record "
-            "without buffering the whole report), 'h1md' (HackerOne-style "
+            "without buffering the whole report), 'csv' (one header row plus one "
+            "row per finding, RFC-4180 quoted and severity-sorted — paste it "
+            "straight into a spreadsheet / ticket importer to sort, filter, and "
+            "assign findings; the header is emitted even on a zero-finding run), "
+            "'h1md' (HackerOne-style "
             "markdown), or 'sarif' (SARIF 2.1.0 for GitHub code-scanning / CI "
             "security dashboards). SARIF maps each attack category to a rule and "
             "each finding to a result with a GitHub-compatible security-severity; "

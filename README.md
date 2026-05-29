@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `h1md` (HackerOne markdown), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -195,6 +195,41 @@ ouija … --format jsonl | jq -s '
 
 `--plan --format jsonl` emits the plan as a single compact `"record": "plan"`
 line (a plan has no findings to stream).
+
+## CSV output (`--format csv`)
+
+Where `json`/`jsonl` feed machines and `h1md` is prose, **`--format csv`** is the
+spreadsheet hand-off: **one header row plus one row per finding**, severity-sorted
+(critical first, same order as the `h1md` report), [RFC-4180](https://www.rfc-editor.org/rfc/rfc4180)
+quoted so a comma or newline embedded in a prompt/evidence cell never breaks a
+row. Paste it straight into Excel / Google Sheets / a ticket importer to sort by
+severity, filter by category, and assign findings to triagers. The header is
+emitted **even on a zero-finding run**, so a downstream importer always sees the
+schema.
+
+The columns, in order:
+
+```
+id,severity,category,owasp,title,confidence,attempts,successes,success_rate,pattern_id,technique,request_prompt,response_excerpt,evidence
+```
+
+```bash
+# Save a triage spreadsheet for the bug-bounty queue
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
+  --format csv > findings.csv
+
+# Quick terminal triage: just the severity / category / title columns
+ouija … --format csv | cut -d, -f2,3,5
+
+# Filter to high+critical with a spreadsheet/CSV tool of your choice, e.g.
+ouija … --format csv | csvgrep -c severity -r '^(high|critical)$'
+```
+
+`attempts`/`successes`/`success_rate` carry the [`--repeats`](#flags) reliability
+metric (they read `1`/`1`/`1.0` for single-shot findings). Multi-turn
+(`--multi-turn`) transcripts are **not** flattened into a CSV cell — the row still
+appears, identified by its `id`/`pattern_id`; read `--format json` or `h1md` for
+the full conversation.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 
