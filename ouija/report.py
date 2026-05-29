@@ -156,6 +156,48 @@ def to_json(result: ScanResult) -> str:
     return json.dumps(result.model_dump(mode="json"), indent=2)
 
 
+def to_jsonl(result: ScanResult) -> str:
+    """Render the scan as newline-delimited JSON (JSON Lines / NDJSON).
+
+    Where ``--format json`` emits a single indented document that a consumer
+    must read whole, ``--format jsonl`` emits one compact JSON object per line
+    so the output is *streamable*: a log shipper, ``jq -c``, ``while read line``,
+    or a line-buffered tail can consume each record as a standalone document
+    without buffering the entire (potentially large) report.
+
+    [Worker decision (Phase 2 / R27): chose JSON-streaming output (``jsonl``)
+    over ``--schedule`` recurring-scan. The R26 ``--notify`` worker already
+    assessed and rejected ``--schedule`` because a scheduler implies a
+    long-running stateful daemon + persistence, which fights ouija's stateless
+    single-run CLI design (the README delegates recurrence to external cron).
+    That assessment still holds at R27. JSONL, by contrast, is a pure function
+    over the final ``ScanResult`` — same shape as ``to_json``/``to_sarif`` — so
+    it needs no async restructuring of the scanner and changes no architecture.]
+
+    The stream is exactly three *record kinds*, in order, each tagged with a
+    ``"record"`` discriminator so a consumer can route by line:
+
+    * one ``"scan"`` header line — the run identity and counts (every top-level
+      ``ScanResult`` field EXCEPT ``findings``/``summary``);
+    * zero-or-more ``"finding"`` lines — one full :class:`~ouija.models.Finding`
+      per line, carrying every field the ``json`` report's findings carry;
+    * one ``"summary"`` footer line — the roll-up block.
+
+    The union of all lines is information-equivalent to the single ``json``
+    document, so no detail is lost; it is only reshaped for streaming.
+    """
+    dumped = result.model_dump(mode="json")
+    findings = dumped.pop("findings")
+    summary = dumped.pop("summary")
+
+    lines: list[str] = []
+    lines.append(json.dumps({"record": "scan", **dumped}))
+    for finding in findings:
+        lines.append(json.dumps({"record": "finding", **finding}))
+    lines.append(json.dumps({"record": "summary", **summary}))
+    return "\n".join(lines)
+
+
 def to_h1md(result: ScanResult) -> str:
     findings = sorted(
         result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
@@ -241,6 +283,8 @@ def to_h1md(result: ScanResult) -> str:
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
+    if fmt == "jsonl":
+        return to_jsonl(result)
     if fmt == "h1md":
         return to_h1md(result)
     if fmt == "sarif":

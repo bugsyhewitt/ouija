@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `h1md` (HackerOne markdown), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json) and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `h1md` (HackerOne markdown), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -149,6 +149,53 @@ time you scan**, so you can
 Because the target host is excluded, a finding is comparable across environments
 (the same prompt-injection bug carries the same `id` in staging and production).
 
+## Streaming JSON output (`--format jsonl`)
+
+Where `--format json` emits one indented document you must read whole, **`--format
+jsonl`** emits the same information as **newline-delimited JSON** (JSON Lines /
+NDJSON) — one compact JSON object per line — so the output is *streamable*. A log
+shipper, a SIEM ingest pipeline, `jq -c`, or a plain `while read line` loop can
+consume each record as a standalone document without buffering the whole
+(potentially large) report.
+
+The stream is exactly three **record kinds**, in order, each tagged with a
+`"record"` discriminator so a consumer can route by line:
+
+```jsonc
+{"record": "scan", "tool": "ouija", "version": "0.1.19", "scan_id": "…", "timestamp": "…", "target": "https://api.example.com/v1/chat", "attack_set": "injection", "patterns_sent": 88}
+{"record": "finding", "id": "ouija-inj-1a2b3c4d", "category": "prompt_injection", "severity": "high", "title": "…", "pattern_id": "inj-001:base", … }
+{"record": "finding", "id": "ouija-inj-5e6f7a8b", "category": "prompt_injection", "severity": "medium", … }
+{"record": "summary", "total": 88, "successful": 2, "attack_sets": {"injection": 2}}
+```
+
+- exactly **one** `"scan"` header line, first — the run identity and counts (every
+  top-level field the `json` report carries *except* `findings`/`summary`);
+- **zero-or-more** `"finding"` lines — one full finding per line, carrying every
+  field the `json` report's findings carry;
+- exactly **one** `"summary"` footer line, last — the same roll-up block.
+
+The union of all lines is information-equivalent to the single `json` document —
+no detail is lost, it is only reshaped for streaming. Reassemble it trivially:
+
+```bash
+# Stream findings to a SIEM/log pipeline one line at a time
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt --format jsonl \
+  | while IFS= read -r line; do process_one_record "$line"; done
+
+# Pull just the finding severities with compact jq (no array indexing)
+ouija --target https://api.example.com/v1/chat --scope-file scope.txt --format jsonl \
+  | jq -c 'select(.record == "finding") | {severity, pattern_id, title}'
+
+# Reassemble back into the single --format json document if you want it whole
+ouija … --format jsonl | jq -s '
+  (map(select(.record=="scan"))[0] | del(.record))
+  + {findings: (map(select(.record=="finding") | del(.record)))}
+  + {summary: (map(select(.record=="summary"))[0] | del(.record))}'
+```
+
+`--plan --format jsonl` emits the plan as a single compact `"record": "plan"`
+line (a plan has no findings to stream).
+
 ## Baselines (`--baseline` / `--write-baseline`)
 
 You re-run ouija against the same endpoint constantly — after filing a report,
@@ -221,9 +268,11 @@ equals `patterns_sent` in the eventual report. That makes it safe to gate a
 pipeline on a request budget, to size token cost, or to review an attack-surface
 change in a PR.
 
-`--format json` emits a machine-readable plan for CI / triage tooling; any other
-`--format` prints a human-readable summary (the finding-shaped `h1md`/`sarif`
-renderers are meaningless for a zero-finding preview, so they fall back to text).
+`--format json` emits a machine-readable plan for CI / triage tooling; `--format
+jsonl` emits the same plan as a single compact `"record": "plan"` line for a
+streaming pipeline; any other `--format` prints a human-readable summary (the
+finding-shaped `h1md`/`sarif` renderers are meaningless for a zero-finding
+preview, so they fall back to text).
 
 ```console
 $ ouija --target https://api.example.com/chat \

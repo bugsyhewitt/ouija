@@ -23,7 +23,7 @@ def test_help_lists_required_flags(capsys):
     for choice in ("injection", "disclosure", "dos", "all"):
         assert choice in out
     # format choices
-    assert "json" in out and "h1md" in out and "sarif" in out
+    assert "json" in out and "jsonl" in out and "h1md" in out and "sarif" in out
 
 
 def test_out_of_scope_exits_2(scope_file, capsys):

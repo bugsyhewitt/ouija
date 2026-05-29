@@ -230,6 +230,28 @@ def test_cli_plan_emits_json_plan(mock_llm, scope_file, capsys):
     assert "findings" not in data
 
 
+def test_cli_plan_emits_jsonl_plan_single_line(mock_llm, scope_file, capsys):
+    """--plan --format jsonl emits one compact 'plan'-tagged JSON Lines record."""
+    rc = main(
+        [
+            "--target", mock_llm.url,
+            "--scope-file", scope_file,
+            "--attack-set", "injection",
+            "--format", "jsonl",
+            "--plan",
+        ]
+    )
+    assert rc == EXIT_OK
+    out = capsys.readouterr().out.strip()
+    # A plan has no findings to stream, so its jsonl form is exactly one line.
+    assert "\n" not in out
+    data = json.loads(out)
+    assert data["record"] == "plan"
+    assert data["kind"] == "plan"
+    assert data["total_requests"] > 0
+    assert "findings" not in data
+
+
 def test_cli_plan_default_format_is_text(mock_llm, scope_file, capsys):
     rc = main(
         [
