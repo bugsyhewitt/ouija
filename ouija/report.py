@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 
 from ouija.models import ScanResult, Severity
@@ -198,6 +200,73 @@ def to_jsonl(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
+# Stable, documented column order for the `--format csv` triage export. One row
+# per finding; the columns are the Finding fields a bug-bounty triager sorts and
+# filters on in a spreadsheet (severity/category/owasp first), plus the
+# reliability metrics (attempts/successes/success_rate) populated by --repeats.
+# The full evidence/prompt/response text columns come last because they are the
+# wide free-text fields. Multi-turn transcripts are NOT flattened into CSV (they
+# are a nested structure with no sensible single-cell form) — use --format json
+# or h1md for those; the row still appears, identified by its id/pattern_id.
+CSV_COLUMNS: tuple[str, ...] = (
+    "id",
+    "severity",
+    "category",
+    "owasp",
+    "title",
+    "confidence",
+    "attempts",
+    "successes",
+    "success_rate",
+    "pattern_id",
+    "technique",
+    "request_prompt",
+    "response_excerpt",
+    "evidence",
+)
+
+
+def to_csv(result: ScanResult) -> str:
+    """Render the findings as RFC-4180 CSV — one header row, one row per finding.
+
+    Where ``--format json``/``jsonl`` are machine-pipe formats and ``h1md`` is a
+    prose report, ``--format csv`` is the spreadsheet hand-off: a triager pastes
+    it into Excel / Google Sheets / a ticket importer to sort by severity, filter
+    by category, and assign findings. The header is emitted even for a zero-
+    finding run so a downstream importer always sees the schema.
+
+    [Worker decision (Phase 2 / R28): chose ``--format csv`` over
+    ``--output-file`` auto-rotation. CSV is a pure function over the final
+    :class:`~ouija.models.ScanResult` — identical in shape to
+    ``to_json``/``to_jsonl``/``to_sarif`` — so it touches no scanner state and
+    no architecture, matching how every prior format was added. ``--output-file``
+    rotation, by contrast, would introduce file-writing + a rotation/retention
+    policy into a tool that is deliberately stdout-only (the README delegates
+    artifact management to shell redirection and CI upload steps), a larger and
+    less defensible change. ``--schedule`` stays deferred (stateful daemon).]
+
+    Findings are ordered by descending severity (critical first), matching the
+    ``h1md`` report, and quoting follows :mod:`csv`'s default RFC-4180 rules so a
+    comma or newline embedded in a prompt/evidence cell never breaks a row.
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+    buf = io.StringIO()
+    writer = csv.DictWriter(
+        buf,
+        fieldnames=list(CSV_COLUMNS),
+        lineterminator="\n",
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    for f in findings:
+        row = f.model_dump(mode="json")
+        row["severity"] = f.severity.value
+        writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
+    return buf.getvalue().rstrip("\n")
+
+
 def to_h1md(result: ScanResult) -> str:
     findings = sorted(
         result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
@@ -285,6 +354,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_json(result)
     if fmt == "jsonl":
         return to_jsonl(result)
+    if fmt == "csv":
+        return to_csv(result)
     if fmt == "h1md":
         return to_h1md(result)
     if fmt == "sarif":
