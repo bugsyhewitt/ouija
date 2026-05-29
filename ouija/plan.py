@@ -184,6 +184,16 @@ def plan_to_json(plan: ScanPlan) -> str:
     return json.dumps(plan.model_dump(mode="json"), indent=2)
 
 
+def plan_to_jsonl(plan: ScanPlan) -> str:
+    """Render a plan as a single compact JSON Lines record.
+
+    A plan is a single artifact (no findings to stream), so its streaming form
+    is one compact ``"record": "plan"``-tagged line — consistent with the
+    ``jsonl`` report's discriminated record shape and pipeable by ``jq -c``.
+    """
+    return json.dumps({"record": "plan", **plan.model_dump(mode="json")})
+
+
 def plan_to_text(plan: ScanPlan) -> str:
     """Render a plan as a stable human-readable summary.
 
@@ -229,9 +239,12 @@ def plan_to_text(plan: ScanPlan) -> str:
 def render_plan(plan: ScanPlan, fmt: str) -> str:
     """Render a plan in the requested format.
 
-    ``json`` produces the machine-readable plan; every other format falls back
-    to the human-readable text summary (h1md/sarif are finding-shaped).
+    ``json`` produces the machine-readable plan; ``jsonl`` produces the compact
+    single-line streaming form; every other format falls back to the
+    human-readable text summary (h1md/sarif are finding-shaped).
     """
     if fmt == "json":
         return plan_to_json(plan)
+    if fmt == "jsonl":
+        return plan_to_jsonl(plan)
     return plan_to_text(plan)

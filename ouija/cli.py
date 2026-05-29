@@ -74,16 +74,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "h1md", "sarif"],
+        choices=["json", "jsonl", "h1md", "sarif"],
         default="json",
         dest="fmt",
         help=(
-            "Output format: 'json' (structured machine-readable, default), "
-            "'h1md' (HackerOne-style markdown), or 'sarif' (SARIF 2.1.0 for "
-            "GitHub code-scanning / CI security dashboards). SARIF maps each "
-            "attack category to a rule and each finding to a result with a "
-            "GitHub-compatible security-severity; pair it with --fail-on to "
-            "both gate the build and upload alerts."
+            "Output format: 'json' (structured machine-readable single document, "
+            "default), 'jsonl' (newline-delimited / streaming JSON — one compact "
+            "record per line: a 'scan' header, one 'finding' per line, then a "
+            "'summary' footer, each tagged with a \"record\" discriminator — so a "
+            "log shipper, `jq -c`, or a `while read` loop can consume each record "
+            "without buffering the whole report), 'h1md' (HackerOne-style "
+            "markdown), or 'sarif' (SARIF 2.1.0 for GitHub code-scanning / CI "
+            "security dashboards). SARIF maps each attack category to a rule and "
+            "each finding to a result with a GitHub-compatible security-severity; "
+            "pair it with --fail-on to both gate the build and upload alerts."
         ),
     )
     parser.add_argument(
