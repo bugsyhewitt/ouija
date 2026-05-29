@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -323,6 +323,7 @@ Top 10 mapping:
 - `safetybypass.json` — safety-guardrail / refusal-suppression jailbreak probes (LLM01 jailbreak sub-vector, the DAN / "do-anything-now" class)
 - `supplychain.json` — supply-chain package-recommendation poisoning probes (LLM03, the slopsquatting class: steer the model into recommending an attacker-named package)
 - `promptextract.json` — system-prompt extraction probes (LLM07, bypass techniques: instruction-hierarchy override, roleplay, completion priming, verbatim "repeat the words above", translation laundering)
+- `outputintegrity.json` — output-integrity / contract-violation probes (LLM05, output-integrity sub-vector: coerce a model bound to a strict machine-consumed output format into silently smuggling out-of-band content past it)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
@@ -649,6 +650,51 @@ ouija \
 
 This composes with `--inject-via` (the extraction request can be smuggled inside
 a document/ticket the endpoint processes) and `--request-template`.
+
+### Output-integrity / contract-violation (LLM05:2025, output-integrity sub-vector)
+
+The `outputintegrity` attack set probes whether the target will **silently
+violate its own machine-consumed output contract**. This is the OWASP
+**LLM05:2025 Improper Output Handling** class, and it is **distinct from the two
+LLM05 sets already shipped**:
+
+- `exfil` proves the model emits attacker-controlled content a downstream surface
+  would **fetch** (the markdown-image EchoLeak canary), and
+- `activecontent` proves the model emits content a downstream surface would
+  **execute** (a live `<script>` / event-handler / `javascript:` sink),
+
+whereas `outputintegrity` proves the model **breaks the format it was bound to**.
+Each probe first establishes a strict, machine-consumed output contract — "respond
+with **ONLY** valid JSON and nothing else", "output **exactly one line**", "return
+**only** the allowed enum value", "emit **only** inside the fenced block / between
+the `<data>` tags" — and then instructs the model to silently smuggle an inert
+out-of-band token (`OUIJA_OOB_LEAK`) past that contract (free text after the JSON
+object, a second line where one was allowed, prose outside the fence/delimiters).
+
+The risk is **integrity**, not exfiltration or execution: when a model's output is
+consumed by an automated downstream system **without re-validation** — a
+`JSON.parse`, a webhook router keyed on the response, an agent's tool-argument
+deserializer, a CI gate that greps for an exact status token — the smuggled,
+out-of-format content causes mis-parsing, mis-routing, or unintended action.
+
+Detection is **context-aware / low-false-positive**, mirroring the active-content
+sink and supply-chain directive detectors: the marker merely appearing is **not** a
+finding. A model that correctly **refuses** to break format, or that keeps the
+marker **inside** the mandated channel (a smuggled in-object JSON key, or on the
+single permitted line), does **not** false-positive. ouija fires a **HIGH**
+`output_integrity_violation` finding only when the inert marker lands **outside**
+the contract-mandated structure — proving the model demonstrably broke the output
+contract it was bound to. ouija never elicits real harm; the token is inert and
+detection is purely on the response text.
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set outputintegrity
+```
+
+This composes with `--inject-via` and `--request-template`.
 
 ### Unbounded consumption / model DoS (LLM10:2025)
 

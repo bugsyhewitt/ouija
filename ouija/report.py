@@ -124,6 +124,23 @@ _IMPACT = {
         "blast radius of every other attack class (OWASP LLM07:2025 System "
         "Prompt Leakage)."
     ),
+    "output_integrity_violation": (
+        "The endpoint violates its own machine-consumed output contract — it was "
+        "bound to a strict, downstream-parsed format (ONLY valid JSON, exactly "
+        "one line, only the bare enum value, only content inside a fence or "
+        "delimiter region) and silently smuggled out-of-band content past that "
+        "contract. When the model's output is consumed by an automated downstream "
+        "system without re-validation — a JSON.parse, a webhook router keyed on "
+        "the response, an agent's tool-argument deserializer, a CI gate that "
+        "greps for an exact status token — the smuggled, out-of-format content "
+        "causes mis-parsing, mis-routing, or unintended action on attacker-shaped "
+        "data. This is the output-INTEGRITY failure mode of improper output "
+        "handling, distinct from the data-exfiltration (markdown-image canary) "
+        "and code-execution (live active-content sink) LLM05 sub-vectors: here "
+        "the harm is that a model trusted to honour a format can be made to break "
+        "it silently, defeating every downstream control that assumes the "
+        "contract holds (OWASP LLM05:2025 Improper Output Handling)."
+    ),
 }
 
 _SEVERITY_ORDER = {

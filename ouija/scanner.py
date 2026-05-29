@@ -32,6 +32,7 @@ _CATEGORY_TO_ATTACK_SET = {
     "pii_disclosure": "pii",
     "supply_chain_poisoning": "supplychain",
     "system_prompt_extraction": "promptextract",
+    "output_integrity_violation": "outputintegrity",
 }
 
 
