@@ -196,18 +196,39 @@ def to_h1md(result: ScanResult) -> str:
         lines.append("")
         lines.append("### Steps to reproduce")
         lines.append("")
-        lines.append(f"1. Send the following prompt to `{result.target}`:")
-        lines.append("")
-        lines.append("```")
-        lines.append(f.request_prompt)
-        lines.append("```")
-        lines.append("")
-        lines.append("2. Observe the response, which contained:")
-        lines.append("")
-        lines.append("```")
-        lines.append(f.response_excerpt)
-        lines.append("```")
-        lines.append("")
+        if f.transcript:
+            # Multi-turn / Crescendo finding: reproduce the full conversation so a
+            # triager can replay the exact escalation that defeated the guardrail.
+            lines.append(
+                f"This is a multi-turn (Crescendo) finding. The target complied "
+                f"on turn {f.turn_succeeded} after conversational escalation. "
+                f"Replay the conversation against `{result.target}`, sending each "
+                f"user turn in order and carrying the full message history:"
+            )
+            lines.append("")
+            lines.append("```")
+            turn_no = 0
+            for msg in f.transcript:
+                if msg["role"] == "user":
+                    turn_no += 1
+                    lines.append(f"[turn {turn_no}] user: {msg['content']}")
+                else:
+                    lines.append(f"          assistant: {msg['content']}")
+            lines.append("```")
+            lines.append("")
+        else:
+            lines.append(f"1. Send the following prompt to `{result.target}`:")
+            lines.append("")
+            lines.append("```")
+            lines.append(f.request_prompt)
+            lines.append("```")
+            lines.append("")
+            lines.append("2. Observe the response, which contained:")
+            lines.append("")
+            lines.append("```")
+            lines.append(f.response_excerpt)
+            lines.append("```")
+            lines.append("")
         lines.append("### Business impact")
         lines.append(_IMPACT.get(f.category, "See category description."))
         lines.append("")

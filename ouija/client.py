@@ -161,6 +161,13 @@ def _extract_text(payload: object) -> str:
 
 
 _TEMPLATE_PLACEHOLDER = '"{prompt}"'
+# Multi-turn (Crescendo) templating placeholder: a request template may instead
+# carry "{messages}" (quoted), which the conversation driver replaces with the
+# JSON-encoded list of {"role", "content"} turn objects. This lets multi-turn
+# runs target endpoints whose body wraps the messages array in extra fields
+# (model name, temperature, etc.). When absent, the default OpenAI-style
+# {"messages": [...]} shape is used.
+_MESSAGES_PLACEHOLDER = '"{messages}"'
 
 
 class TargetClient:
@@ -204,20 +211,17 @@ class TargetClient:
             return body_str.encode()
         return json.dumps({"prompt": prompt}).encode()
 
-    async def send(self, client: httpx.AsyncClient, prompt: str) -> Reply:
-        body = self._build_body(prompt)
-        resp = await client.post(
-            self.target,
-            content=body,
-            headers=self._headers,
-            timeout=self.timeout,
-        )
+    def _extract_reply(self, resp: httpx.Response) -> Reply:
+        """Shared response-extraction path for both single-shot and multi-turn.
+
+        Honours --response-path when configured, otherwise falls back to the
+        heuristic field guesser, and finally to the raw body.
+        """
         raw = resp.text
         text = ""
         try:
             parsed = resp.json()
             if self._response_steps is not None:
-                # Pinned extraction: read exactly the configured location.
                 text = extract_by_path(parsed, self._response_steps)
             else:
                 text = _extract_text(parsed)
@@ -226,3 +230,51 @@ class TargetClient:
         if not text:
             text = raw
         return Reply(status_code=resp.status_code, text=text, raw=raw)
+
+    async def send(self, client: httpx.AsyncClient, prompt: str) -> Reply:
+        body = self._build_body(prompt)
+        resp = await client.post(
+            self.target,
+            content=body,
+            headers=self._headers,
+            timeout=self.timeout,
+        )
+        return self._extract_reply(resp)
+
+    def _build_conversation_body(self, messages: list[dict[str, str]]) -> bytes:
+        """Return the JSON-encoded request body for a multi-turn *messages* list.
+
+        When the configured request template carries the ``"{messages}"``
+        placeholder, the JSON-encoded turn list is substituted into it (so an
+        operator can wrap the array in model/temperature/etc. fields). Otherwise
+        the default OpenAI-style ``{"messages": [...]}`` body is used. A template
+        built for single-shot use (``"{prompt}"`` only) is intentionally ignored
+        here — multi-turn needs the whole array, not one prompt string.
+        """
+        encoded = json.dumps(messages)
+        if (
+            self._request_template is not None
+            and _MESSAGES_PLACEHOLDER in self._request_template
+        ):
+            body_str = self._request_template.replace(_MESSAGES_PLACEHOLDER, encoded)
+            return body_str.encode()
+        return json.dumps({"messages": messages}).encode()
+
+    async def send_conversation(
+        self, client: httpx.AsyncClient, messages: list[dict[str, str]]
+    ) -> Reply:
+        """Send a full role/content turn history and extract the latest reply.
+
+        This is the stateful counterpart to :meth:`send`: the caller passes the
+        accumulated conversation (every prior user + assistant turn plus the new
+        user turn) and gets back the model's reply to the final turn. Response
+        extraction is identical to single-shot.
+        """
+        body = self._build_conversation_body(messages)
+        resp = await client.post(
+            self.target,
+            content=body,
+            headers=self._headers,
+            timeout=self.timeout,
+        )
+        return self._extract_reply(resp)
