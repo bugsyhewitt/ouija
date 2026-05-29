@@ -309,6 +309,42 @@ black-box HTTP endpoint fuzzer, so they are out of ouija's probe surface.
 
 ---
 
+## Item 12 — Unbounded-consumption / model-DoS detection (LLM10:2025) — ✅ IMPLEMENTED (Rotation 14)
+
+> **Shipped:** the `dos` attack set finally gets a **detector**. v0.1 shipped the
+> `dos.json` corpus (and LLM10 business-impact text in `report.py`) but no
+> detection path: DoS patterns carry `marker: null`, so a target that actually
+> *complied* with a "repeat forever" / "max length" / "deep nesting" probe fell
+> through to the keyword disclosure branch and produced **zero findings** — the
+> corpus was dead weight. This closes the gap with a **response-characteristic**
+> detector (`detect_unbounded_consumption` in `detect.py`, modelled on the
+> context-aware `_canary_rendered` / `_active_sink_rendered` branches): success
+> is decided from what the model *does*, not a marker. Each pattern carries a new
+> `dos_signal` field (`length` | `repetition` | `nesting`) selecting the
+> heuristic — runaway length (≥ 2000 chars), a dominant-token/char repetition
+> flood (≥ 60% over ≥ 400 chars), or a deep-nesting run (≥ 25 consecutive opening
+> brackets, counted through whitespace). A refusal stays short and varied, so the
+> thresholds are conservative to avoid false positives on verbose-but-legitimate
+> answers; a refusal short-circuit suppresses borderline cases. `model_dos`
+> already mapped to **MEDIUM** in `detect.py`'s severity map. Corpus expanded
+> from 4 → 5 patterns (added a character-flood probe). Covered by
+> `tests/test_dos.py` (14 tests, incl. a safe-target no-false-positive case)
+> plus three vulnerable DoS branches in the mock. README + version bumped to
+> 0.1.8.
+
+### Why this over Item 7
+Item 7 (multi-turn/Crescendo) remains the architectural reach goal deferred by
+the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. Item 12 is self-contained, low-risk, and *completes* an attack set
+that was shipped-but-inert since v0.1 (LLM10 had a corpus and impact text but no
+working detection), which is strictly higher-value than leaving dead corpus in
+the tree. The remaining v2025 categories — LLM03 Supply Chain and LLM04 Data &
+Model Poisoning — are infrastructure / training-time concerns not reachable by a
+black-box HTTP endpoint fuzzer, so they stay out of ouija's probe surface.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.
