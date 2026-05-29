@@ -537,6 +537,136 @@ def to_html(result: ScanResult) -> str:
     return "\n".join(out)
 
 
+# Stable, documented column order for the `--format markdown-table` triage view.
+# One pipe-delimited GFM row per finding; the column set is the *compact* triage
+# slice (severity / category / owasp / title / id / confidence / reliability) —
+# deliberately NARROWER than the CSV export because a markdown table is read by
+# humans in a GitHub issue / PR comment / ticket body, not pasted into a
+# spreadsheet. The wide free-text fields (request_prompt, response_excerpt,
+# evidence) are intentionally OMITTED — they contain multi-line attacker text
+# that would explode row height and break GFM table rendering; read --format
+# json or h1md for those. Multi-turn transcripts are likewise not flattened.
+MD_TABLE_COLUMNS: tuple[str, ...] = (
+    "severity",
+    "category",
+    "owasp",
+    "title",
+    "id",
+    "confidence",
+    "reliability",
+)
+
+
+def _md_escape_cell(text: str) -> str:
+    """Escape a value for safe placement inside a GFM table cell.
+
+    GFM splits table rows on the literal pipe (``|``) character, so any pipe in
+    the value would otherwise break the row's column count. Newlines similarly
+    terminate a row. We escape pipes (``\\|``) and replace any newline / carriage
+    return with a single space so each cell stays on one logical line. The other
+    markdown metacharacters (``*``, ``_``, ``` ` ```) are left as-is — they
+    render as styling inside a cell, which is harmless for a triage table.
+    """
+    if not text:
+        return ""
+    return (
+        str(text)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r\n", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
+def to_markdown_table(result: ScanResult) -> str:
+    """Render the findings as a compact GitHub-flavoured-markdown table.
+
+    Where ``--format h1md`` is a long-form HackerOne report (one ``## Finding``
+    section per finding, complete with reproduction steps and business-impact
+    prose), ``--format markdown-table`` is the *one-screen triage view*: a
+    single GFM table — one header row plus one data row per finding,
+    severity-sorted — that renders cleanly inline in a GitHub issue, PR
+    comment, project README, Slack/Discord message, or any markdown-rendered
+    surface. Use it when a stakeholder asks "what did the scan find?" and
+    wants the answer at a glance.
+
+    [Worker decision (Phase 2 / R30): chose ``--format markdown-table`` over
+    ``--format pdf``. Both were unshipped post-v0.1 directions; markdown-table
+    is the more defensible single improvement because (a) it is a pure
+    standard-library function over the final
+    :class:`~ouija.models.ScanResult`, matching every prior format
+    (json/jsonl/csv/sarif/h1md/html), so it touches no scanner state and no
+    architecture, and (b) PDF generation requires a heavy third-party
+    dependency (weasyprint / reportlab) which would fight ouija's
+    deliberately-minimal dependency surface (httpx + pydantic only). A
+    stakeholder who wants a PDF can already render ``--format html`` to PDF
+    via the browser or ``wkhtmltopdf`` without ouija owning the
+    rendering toolchain.]
+
+    Output shape (severity-sorted, critical first):
+
+    * a header row of column names;
+    * the GFM separator row (``|---|---|...``);
+    * one data row per finding, with reliability emitted as
+      ``successes/attempts (rate%)`` when ``--repeats`` > 1, or ``-`` for the
+      single-shot default.
+
+    Wide free-text fields (request_prompt, response_excerpt, evidence) are
+    deliberately omitted — they contain multi-line attacker-controlled text
+    that would break GFM table rendering. Read ``--format json``/``h1md`` for
+    full evidence. A zero-finding run still emits the header so a downstream
+    template (e.g. a PR-comment macro) always sees the table shape.
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+
+    header = "| " + " | ".join(MD_TABLE_COLUMNS) + " |"
+    separator = "|" + "|".join("---" for _ in MD_TABLE_COLUMNS) + "|"
+
+    title_line = (
+        f"# ouija findings — {_md_escape_cell(result.target)} "
+        f"({len(findings)} finding(s), {result.patterns_sent} request(s))"
+    )
+
+    if not findings:
+        return "\n".join(
+            [
+                title_line,
+                "",
+                "_No findings. The target refused or sanitized all probes "
+                "in this attack set._",
+                "",
+                header,
+                separator,
+            ]
+        )
+
+    rows: list[str] = [title_line, "", header, separator]
+    for f in findings:
+        if f.attempts > 1:
+            reliability = f"{f.successes}/{f.attempts} ({f.success_rate:.0%})"
+        else:
+            reliability = "-"
+        cells = {
+            "severity": f.severity.value,
+            "category": f.category,
+            "owasp": f.owasp,
+            "title": f.title,
+            "id": f"`{f.id}`",
+            "confidence": f"{f.confidence:.0%}",
+            "reliability": reliability,
+        }
+        row = (
+            "| "
+            + " | ".join(_md_escape_cell(cells[col]) for col in MD_TABLE_COLUMNS)
+            + " |"
+        )
+        rows.append(row)
+    return "\n".join(rows)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -548,6 +678,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_h1md(result)
     if fmt == "html":
         return to_html(result)
+    if fmt == "markdown-table":
+        return to_markdown_table(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif

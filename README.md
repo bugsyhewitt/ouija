@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README / Slack message), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -266,6 +266,56 @@ HTML-escaped before insertion. A finding whose response captured live
 `<script>` or `<img onerror=…>` (precisely the active-content sink ouija
 detects under `activecontent` / `LLM05`) is rendered as visible text, not
 executed, when the report is opened.
+
+## Markdown-table output (`--format markdown-table`)
+
+Where `--format h1md` is the long-form HackerOne report (one `## Finding`
+section per finding, with reproduction steps and impact prose), and
+`--format html` is the shareable browser-rendered artifact, **`--format
+markdown-table`** is the *one-screen triage view*: a single
+GitHub-flavoured-markdown table — header row, separator row, and one row per
+finding, severity-sorted — that renders inline in a GitHub issue, PR comment,
+project README, Slack/Discord message, or any markdown-rendered surface. It
+is the answer to "what did the scan find?" at a glance; full evidence stays
+available in `--format json` / `--format h1md`.
+
+```bash
+# Drop a triage summary straight into a GitHub issue body
+ouija --target https://api.example.com/v1/chat \
+  --scope-file scope.txt \
+  --attack-set all \
+  --format markdown-table
+
+# Or post the same summary to a PR comment
+ouija ... --format markdown-table | gh pr comment <pr> -F -
+```
+
+Rendered example:
+
+```markdown
+# ouija findings — https://api.example.com/v1/chat (2 finding(s), 47 request(s))
+
+| severity | category | owasp | title | id | confidence | reliability |
+|---|---|---|---|---|---|---|
+| critical | prompt_injection | LLM01:2025 | system-prompt override accepted | `f-a1b2c3d4` | 90% | 3/5 (60%) |
+| medium | sensitive_info_disclosure | LLM02:2025 | partial system-prompt leak | `f-e5f6a7b8` | 70% | - |
+```
+
+The columns are the *compact triage slice* a reviewer reads in the table:
+`severity`, `category`, `owasp`, `title`, `id`, `confidence`, and
+`reliability` (which carries `successes/attempts (rate%)` when `--repeats > 1`,
+or `-` for the default single-shot run). Wide free-text fields
+(`request_prompt`, `response_excerpt`, `evidence`) are deliberately omitted —
+they contain multi-line attacker-controlled text that would explode row
+height and break GFM table rendering. For the full prompt and response, read
+`--format json` or `--format h1md`. Multi-turn (`--multi-turn`) transcripts
+are likewise not flattened into a table cell — the row still appears,
+identified by its `id`.
+
+A zero-finding run still emits the title line, header, and separator (with no
+data rows) so a downstream template (e.g. a PR-comment macro) always sees the
+table shape. Pipes (`|`) and newlines inside any cell are escaped / collapsed,
+so even hostile content keeps the row count well-formed.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 
