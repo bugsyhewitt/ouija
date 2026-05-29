@@ -21,11 +21,52 @@ Each detection returns a Finding or None.
 
 from __future__ import annotations
 
+import hashlib
 import re
-import uuid
 
 from ouija.client import Reply
 from ouija.models import AttackPattern, Finding, Severity
+
+# Short, human-recognisable prefixes per OWASP category so a finding ID carries
+# a hint of *what* it is at a glance (e.g. ``ouija-inj-1a2b3c4d``).
+_CATEGORY_ID_PREFIX = {
+    "prompt_injection": "inj",
+    "sensitive_info_disclosure": "disc",
+    "model_dos": "dos",
+    "improper_output_handling": "exfil",
+    "improper_output_handling_active": "xss",
+    "excessive_agency": "agency",
+    "misinformation": "misinfo",
+    "vector_embedding_weakness": "rag",
+    "safety_guardrail_bypass": "jailbreak",
+    "pii_disclosure": "pii",
+    "supply_chain_poisoning": "supply",
+    "system_prompt_extraction": "sysprompt",
+    "output_integrity_violation": "integrity",
+}
+
+
+def stable_finding_id(category: str, variant_id: str, technique: str, owasp: str) -> str:
+    """Deterministic, structured finding ID derived from a finding's identity.
+
+    The ID is a function of the *stable* attributes that define what the finding
+    IS — the OWASP category, the mutated-pattern variant that produced it, the
+    technique, and the OWASP class — and nothing that varies run-to-run (no
+    timestamp, no random UUID, not the target host). The same logical finding
+    therefore yields the same ID on every scan, which is what makes findings
+    dedupe-able across reruns, trackable through bug-bounty triage, and usable as
+    a SARIF ``partialFingerprint`` so GitHub code-scanning collapses repeat
+    alerts instead of opening a new one each run.
+
+    Format: ``ouija-<category-prefix>-<8 hex>`` where the hex is the first 8
+    characters of the SHA-256 of the identity tuple. The category prefix is
+    cosmetic; the hex is the actual identity. Target is intentionally excluded so
+    a finding is comparable across environments (staging vs production).
+    """
+    prefix = _CATEGORY_ID_PREFIX.get(category, "find")
+    identity = "\x1f".join((category, variant_id, technique, owasp))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:8]
+    return f"ouija-{prefix}-{digest}"
 
 # Phrases that suggest the model leaked instructions / secrets / config.
 _DISCLOSURE_SIGNALS = (
@@ -1204,7 +1245,7 @@ def _build_finding(
     severity = _CATEGORY_SEVERITY.get(category, Severity.MEDIUM)
     title = f"{category.replace('_', ' ').title()} via {pattern.technique} ({pattern.name})"
     return Finding(
-        id=f"ouija-{uuid.uuid4().hex[:8]}",
+        id=stable_finding_id(category, variant_id, pattern.technique, owasp),
         category=category,
         severity=severity,
         title=title,
