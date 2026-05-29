@@ -48,6 +48,11 @@ class AttackPattern(BaseModel):
     # fills with a per-run exfiltration canary URL before sending; detection is
     # then on whether the response renders that canary as markup (EchoLeak).
     canary: bool = False
+    # For the `dos` set only: selects which response-characteristic heuristic
+    # decides whether the target *complied* with an unbounded-consumption attack
+    # (LLM10:2025). One of "length", "repetition", or "nesting". DoS patterns
+    # carry no marker, so this drives detection instead of marker matching.
+    dos_signal: Optional[str] = None
 
 
 class Finding(BaseModel):
