@@ -392,6 +392,53 @@ remain out of a black-box HTTP fuzzer's probe surface.
 
 ---
 
+## Item 14 — PII / memorized-data disclosure attack class (LLM02:2025, personal-data sub-vector) — ✅ IMPLEMENTED (Rotation 16)
+
+> **Shipped:** new `--attack-set pii` (`ouija/corpus/pii.json`, 8 patterns,
+> category `pii_disclosure`, OWASP `LLM02:2025 Sensitive Information
+> Disclosure`). This is a **distinct LLM02 sub-vector** from the `disclosure`
+> set: `disclosure` proves the target leaked its system prompt / config /
+> credentials (scored by `score_system_prompt_leak`, tuned for secret & config
+> shapes); `pii` proves the target regurgitated **personally identifiable
+> information** — email addresses, phone numbers, US SSNs, payment-card numbers,
+> IBANs — from its context/conversation or memorized training data, the
+> privacy/compliance-grade (GDPR/CCPA) leak class the credential scorer does not
+> catch at all. Each probe plants a UNIQUE, INERT synthetic PII record (an
+> .invalid-TLD email, the reserved `4111 1111 1111 1111` test card, the
+> `219-09-9999` reserved SSN), so a target that echoes the planted value
+> unambiguously regurgitates supplied context PII; ouija never sends or
+> processes real personal data. Detection is **context-aware** (new
+> `detect_pii_disclosure` in `detect.py`, modelled on the `_canary_rendered` /
+> `_active_sink_rendered` / `detect_unbounded_consumption` branches): it
+> requires an actual PII-SHAPED string in the reply, **Luhn-validates** candidate
+> card numbers so a random 16-digit ID does not false-fire, applies a
+> benign-framing guard so a reply that merely *discusses* PII handling is
+> suppressed, and lets a hard PII shape (SSN/card/IBAN/phone) fire even through a
+> token refusal. HIGH severity + LLM02 PII business-impact text added to
+> `detect.py`/`report.py`; category→attack-set summary mapping added to
+> `scanner.py`; folded into the `all` set. Composes with `--inject-via` and
+> `--request-template`. Covered by `tests/test_pii.py` (12 tests, incl. the
+> non-Luhn-false-positive guard, the benign-discussion guard, and the
+> leak-despite-refusal case) plus a vulnerable PII branch in the mock. README +
+> NOTICE updated. Version bumped to 0.1.10.
+
+### Why this over Item 7
+Item 7 (multi-turn/Crescendo) remains the architectural reach goal deferred by
+the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. With every endpoint-probeable OWASP-v2025 *category* covered
+(LLM01/02/05/06/07/08/09/10), Item 14 fills the highest-value remaining LLM02
+*sub-vector* gap: the `disclosure` set's detector is tuned for system-prompt /
+credential leakage and is blind to **personal-data** regurgitation (emails,
+phones, SSNs, cards, IBANs) — a separate, privacy/compliance-grade, paid bounty
+class. It is the same low-risk "new attack set, context-aware detector, new
+OWASP sub-vector" shape as Items 1, 8, 9, 10, 11, 12, and 13, and adds a genuinely
+new detection behavior (PII-shape regexes + Luhn validation + benign-framing
+guard) rather than reusing an existing path. LLM03 Supply Chain and LLM04 Data &
+Model Poisoning remain out of a black-box HTTP fuzzer's probe surface.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.

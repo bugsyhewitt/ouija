@@ -85,6 +85,17 @@ _IMPACT = {
         "cross-context data exfiltration in multi-tenant deployments (OWASP "
         "LLM08:2025 Vector and Embedding Weaknesses)."
     ),
+    "pii_disclosure": (
+        "The endpoint regurgitates personally identifiable information — email "
+        "addresses, phone numbers, social security numbers, payment-card "
+        "numbers, or IBANs — that it memorized from training data or was given "
+        "in its context/conversation, instead of refusing or redacting. An "
+        "attacker can extract real individuals' personal and financial data, a "
+        "direct privacy breach carrying regulatory exposure (GDPR / CCPA), "
+        "identity-theft and payment-fraud risk, and — for cross-session leakage "
+        "— a tenant-isolation failure (OWASP LLM02:2025 Sensitive Information "
+        "Disclosure, PII / memorized-data sub-vector)."
+    ),
 }
 
 _SEVERITY_ORDER = {
