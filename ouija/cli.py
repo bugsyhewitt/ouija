@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -92,11 +92,16 @@ def build_parser() -> argparse.ArgumentParser:
             "to report.html and open it in any browser, attach it to a ticket, or "
             "hand it to a non-technical stakeholder; all attacker-influenced "
             "values are HTML-escaped so a captured <script> response cannot "
-            "execute when the report is viewed), or 'sarif' (SARIF 2.1.0 for "
-            "GitHub code-scanning / CI security dashboards). SARIF maps each "
-            "attack category to a rule and each finding to a result with a "
-            "GitHub-compatible security-severity; pair it with --fail-on to both "
-            "gate the build and upload alerts."
+            "execute when the report is viewed), 'markdown-table' (a compact "
+            "one-screen GitHub-flavoured-markdown table — header row plus one row "
+            "per finding, severity-sorted, pipe-escaped — that renders inline in "
+            "a GitHub issue, PR comment, README, Slack/Discord message, or any "
+            "markdown surface; the answer to 'what did the scan find?' at a "
+            "glance, with full evidence available in 'json'/'h1md'), or 'sarif' "
+            "(SARIF 2.1.0 for GitHub code-scanning / CI security dashboards). "
+            "SARIF maps each attack category to a rule and each finding to a "
+            "result with a GitHub-compatible security-severity; pair it with "
+            "--fail-on to both gate the build and upload alerts."
         ),
     )
     parser.add_argument(
