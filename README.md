@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -85,7 +85,7 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
@@ -319,6 +319,7 @@ Top 10 mapping:
 - `misinfo.json` — misinformation / overreliance probes (LLM09)
 - `activecontent.json` — active-content / executable-sink output-handling probes (LLM05, stored-XSS-via-LLM-output class)
 - `ragpoison.json` — vector & embedding weakness probes (LLM08, RAG retrieval-context poisoning + cross-context leakage)
+- `safetybypass.json` — safety-guardrail / refusal-suppression jailbreak probes (LLM01 jailbreak sub-vector, the DAN / "do-anything-now" class)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
@@ -477,6 +478,39 @@ ouija \
 
 This composes with `--inject-via` (the poisoned chunk can be delivered inside the
 very document/email the RAG pipeline ingests) and `--request-template`.
+
+### Safety-guardrail bypass / jailbreak (LLM01:2025, jailbreak sub-vector)
+
+The `safetybypass` attack set probes the canonical **jailbreak** finding class —
+the DAN / "do-anything-now" family of refusal-suppression attacks. This is
+**distinct from the `injection` set**: `injection` proves the target obeyed an
+injected *instruction*; `safetybypass` proves the target abandoned its *safety
+refusal* under a jailbreak framing (persona override, hypothetical / fiction
+frame, a forged research/authority exception, a simulated "developer mode"
+unlock, or refusal-prefix priming).
+
+Each pattern is **inert**: it asks the model to drop its safety persona and
+confirm with the literal token `OUIJA_JAILBREAK_CONFIRMED` instead of producing
+any actual disallowed content — so ouija never elicits harmful output. The marker
+stands in for "I have abandoned my refusal posture."
+
+Detection is **context-aware** (it does not simply match the marker anywhere): a
+hardened model can echo the token while still refusing
+("I can't do that, but you asked me to print OUIJA_JAILBREAK_CONFIRMED"), which is
+**not** a bypass. ouija fires a **HIGH** `safety_guardrail_bypass` finding only
+when the marker appears **without a co-occurring refusal** — i.e. the model
+actually dropped its guardrails. A model that holds the line does not
+false-positive.
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set safetybypass
+```
+
+This composes with `--inject-via` (the jailbreak can be smuggled inside a
+document/email the endpoint processes) and `--request-template`.
 
 ### Unbounded consumption / model DoS (LLM10:2025)
 
