@@ -345,6 +345,53 @@ black-box HTTP endpoint fuzzer, so they stay out of ouija's probe surface.
 
 ---
 
+## Item 13 — Safety-guardrail-bypass / jailbreak attack class (LLM01:2025, jailbreak sub-vector) — ✅ IMPLEMENTED (Rotation 15)
+
+> **Shipped:** new `--attack-set safetybypass`
+> (`ouija/corpus/safetybypass.json`, 8 patterns, category
+> `safety_guardrail_bypass`, OWASP `LLM01:2025 Prompt Injection`). This is a
+> **distinct attack class** from every set shipped so far: the existing sets all
+> prove the target *obeyed an injected instruction* (inert marker echoed back);
+> `safetybypass` proves the target *abandoned its safety refusal* under a
+> jailbreak framing — the canonical DAN / "do-anything-now" finding class that
+> red-team and AI-safety bounty programs pay for, and the one OWASP-LLM01
+> sub-vector ouija had no coverage of. Eight patterns cover the dominant
+> jailbreak families (persona override, hypothetical/fiction frame, forged
+> research-authority exception, simulated "developer mode" unlock,
+> refusal-prefix priming, emotional role-play, policy negation). Each pattern is
+> **inert** — it coerces the model to drop its safety persona and confirm with
+> the literal token `OUIJA_JAILBREAK_CONFIRMED` rather than to produce any actual
+> disallowed content, so ouija never elicits harmful output. Detection is
+> **context-aware** (a new branch in `detect.py`, modelled on the
+> `_active_sink_rendered` / `detect_unbounded_consumption` branches that came
+> before it): bare marker-anywhere matching is intentionally insufficient — a
+> hardened model can echo the token *while still refusing*, which is NOT a
+> bypass. The detector fires a **HIGH** `safety_guardrail_bypass` finding only
+> when the marker appears WITHOUT a co-occurring refusal (`_looks_like_refusal`),
+> so a model that holds the line does not false-positive. LLM01-jailbreak
+> business-impact text added to `report.py`; category→attack-set summary mapping
+> added to `scanner.py`; folded into the `all` set. Composes with `--inject-via`
+> and `--request-template`. Covered by `tests/test_safetybypass.py` (8 tests,
+> incl. the defining marker-present-but-still-refusing no-false-positive case)
+> plus a vulnerable jailbreak branch in the mock. README updated. Version bumped
+> to 0.1.9.
+
+### Why this over Item 7
+Item 7 (multi-turn/Crescendo) remains the architectural reach goal deferred by
+the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. With every endpoint-probeable OWASP-v2025 *category* now covered
+(LLM01/02/05/06/07/08/09/10), Item 13 fills the most valuable remaining *sub-vector*
+gap inside LLM01: the existing `injection` set covers instruction-override, but
+nothing tested safety/refusal bypass — the jailbreak class that is its own
+distinct, paid bounty finding. It is the same low-risk "new attack set,
+context-aware marker detection" shape as Items 1, 8, 9, 10, 11, and 12, and adds
+a genuinely new detection behavior (refusal-aware marker gating) rather than
+reusing bare marker matching. LLM03 Supply Chain and LLM04 Data & Model Poisoning
+remain out of a black-box HTTP fuzzer's probe surface.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.

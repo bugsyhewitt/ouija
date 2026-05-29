@@ -22,6 +22,7 @@ _SETS: dict[str, list[str]] = {
     "misinfo": ["misinfo.json"],
     "activecontent": ["activecontent.json"],
     "ragpoison": ["ragpoison.json"],
+    "safetybypass": ["safetybypass.json"],
     "all": [
         "injection.json",
         "disclosure.json",
@@ -31,6 +32,7 @@ _SETS: dict[str, list[str]] = {
         "misinfo.json",
         "activecontent.json",
         "ragpoison.json",
+        "safetybypass.json",
     ],
 }
 

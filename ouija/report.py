@@ -61,6 +61,19 @@ _IMPACT = {
         "fabricated package/API references — supply-chain risk such as "
         "slopsquatting (OWASP LLM09:2025 Misinformation)."
     ),
+    "safety_guardrail_bypass": (
+        "The endpoint can be jailbroken: under a refusal-suppression framing "
+        "(DAN / 'do-anything-now' persona override, hypothetical or fiction "
+        "frame, a forged research/authority exception, or a simulated unlocked "
+        "'developer mode'), the model abandons its safety guardrails and "
+        "confirms it will comply with requests it would normally refuse. An "
+        "attacker who controls the prompt can then drive the model to produce "
+        "disallowed content — hate speech, dangerous instructions, malware, "
+        "disinformation, CSAM-adjacent or self-harm content — which the "
+        "deploying organization is liable for serving, with severe legal, "
+        "safety, and reputational exposure (OWASP LLM01:2025 Prompt Injection, "
+        "jailbreak / safety-bypass sub-vector)."
+    ),
     "vector_embedding_weakness": (
         "The endpoint is backed by a vector store / RAG pipeline that fails to "
         "isolate or validate its retrieval context. An attacker can poison the "

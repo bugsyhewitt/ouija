@@ -16,17 +16,18 @@ Summary of provenance
 -----------------------------------------------------------------------------
 All prompt STRINGS shipped in ouija/corpus/ (injection.json, disclosure.json,
 dos.json, exfil.json, agency.json, misinfo.json, activecontent.json,
-ragpoison.json) are ORIGINALLY AUTHORED by the ouija project. They are generic,
-well-known LLM-red-teaming *techniques* (e.g. "ignore previous instructions",
-system-prompt extraction, persona-shift, delimiter confusion, markdown-image
-exfiltration, tool-call coercion, fabricated citation/overreliance,
+ragpoison.json, safetybypass.json) are ORIGINALLY AUTHORED by the ouija project.
+They are generic, well-known LLM-red-teaming *techniques* (e.g. "ignore previous
+instructions", system-prompt extraction, persona-shift, delimiter confusion,
+markdown-image exfiltration, tool-call coercion, fabricated citation/overreliance,
 active-content / executable-sink output handling — XSS/SQL/command payloads
-emitted into model output — and RAG retrieval-context poisoning /
-cross-context-and-embedding leakage) rewritten in our own words and instrumented
-with our own benign detection markers (OUIJA_INJECTION_CONFIRMED,
+emitted into model output — RAG retrieval-context poisoning /
+cross-context-and-embedding leakage, and safety-guardrail / refusal-suppression
+jailbreaks — the DAN / "do-anything-now" class) rewritten in our own words and
+instrumented with our own benign detection markers (OUIJA_INJECTION_CONFIRMED,
 OUIJA_TOOL_INVOKED, OUIJA_FABRICATION_CONFIRMED, OUIJA_XSS_SINK,
-OUIJA_RAG_POISONED, and a per-run exfil canary). No prompt text was copied
-verbatim from any external dataset.
+OUIJA_RAG_POISONED, OUIJA_JAILBREAK_CONFIRMED, and a per-run exfil canary). No
+prompt text was copied verbatim from any external dataset.
 
 The categories of techniques were INFORMED by the public LLM-red-teaming
 literature and datasets listed below. Because no verbatim text was copied,
