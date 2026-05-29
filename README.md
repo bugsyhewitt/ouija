@@ -59,6 +59,7 @@ ouija \
 | `--fail-on` | CI/CD gating. Exit `1` when at least one finding is at or above this severity: `info`, `low`, `medium`, `high`, `critical`, or `none` (default). `none` keeps the historical exit-`0`-on-completion behaviour. See [Exit codes & CI gating](#exit-codes--cicd-gating). |
 | `--baseline` | Path to a baseline file of already-triaged finding IDs. Matching findings are suppressed from the report **and** the `--fail-on` gate, so reruns surface only what is new. See [Baselines](#baselines---baseline----write-baseline). |
 | `--write-baseline` | Path to write this run's finding IDs to, for use as a future `--baseline`. See [Baselines](#baselines---baseline----write-baseline). |
+| `--plan` | Dry-run / report-only: print exactly what the scan **will** send (total request count, per-attack-set breakdown, mode) **without sending a single request**. Pair with `--format json` for a machine-readable plan to feed CI / triage. See [Dry-run / plan mode](#dry-run--plan-mode---plan). |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
@@ -199,6 +200,55 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 Suppression and write counts are printed to **stderr** (so they never pollute
 the JSON/SARIF report on stdout). A missing or malformed `--baseline` file
 exits `3` *before* any request is sent.
+
+## Dry-run / plan mode (`--plan`)
+
+Before you point ouija at a production endpoint, you usually want to know the
+blast radius: **how many requests** will hit the target, **which attack classes**
+will run, and what **mode** (single-shot vs multi-turn). `--plan` answers all
+three without sending a single request — it enumerates the exact fan-out the
+scan would issue and exits `0`.
+
+The scope gate still runs first, so a plan is only ever produced for an
+in-scope host. All other fail-fast validation (`--request-template`,
+`--response-path`, `--baseline` path) runs too, so `--plan` doubles as a config
+check. **No request is ever sent to the target in plan mode.**
+
+The request count it reports **matches the real run exactly** — the plan
+re-derives the scanner's own `patterns × variants × repeats` math (and, in
+`--multi-turn`, the per-ladder turn budget), so `total_requests` in the plan
+equals `patterns_sent` in the eventual report. That makes it safe to gate a
+pipeline on a request budget, to size token cost, or to review an attack-surface
+change in a PR.
+
+`--format json` emits a machine-readable plan for CI / triage tooling; any other
+`--format` prints a human-readable summary (the finding-shaped `h1md`/`sarif`
+renderers are meaningless for a zero-finding preview, so they fall back to text).
+
+```console
+$ ouija --target https://api.example.com/chat \
+      --scope-file scope.txt \
+      --attack-set all --mutators all --repeats 3 \
+      --plan
+ouija scan plan (dry run — no requests sent) — https://api.example.com/chat
+  tool version : ouija v0.1.18
+  attack set   : all
+  mode         : single-shot
+  mutators     : all
+  repeats      : 3
+  inject-via   : direct
+  total reqs   : 3294
+
+  Per attack set (patterns x variants x repeats = requests):
+    - prompt_injection: 22 x 9 x 3 = 594
+    - sensitive_info_disclosure: 12 x 9 x 3 = 324
+    ...
+```
+
+The JSON form (`--format json --plan`) carries `"kind": "plan"` at the top level
+— a plan is **not** a result and never contains a `findings` array — plus
+`total_requests` and an `attack_sets[]` (or `ladders[]` for `--multi-turn`)
+breakdown a triage pipeline can read with `jq '.total_requests'`.
 
 ## Custom request body shapes (`--request-template`)
 
