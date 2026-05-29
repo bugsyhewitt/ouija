@@ -31,6 +31,7 @@ _CATEGORY_TO_ATTACK_SET = {
     "safety_guardrail_bypass": "safetybypass",
     "pii_disclosure": "pii",
     "supply_chain_poisoning": "supplychain",
+    "system_prompt_extraction": "promptextract",
 }
 
 
