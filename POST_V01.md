@@ -491,6 +491,57 @@ stays out of ouija's probe surface and Item 7 remains the next reach goal.
 
 ---
 
+## Item 16 — System-prompt extraction attack class (LLM07:2025 System Prompt Leakage, bypass-driven sub-vector) — ✅ IMPLEMENTED (Rotation 18)
+
+> **Shipped:** new `--attack-set promptextract`
+> (`ouija/corpus/promptextract.json`, 10 patterns, category
+> `system_prompt_extraction`, OWASP `LLM07:2025 System Prompt Leakage`). This is
+> a genuinely **distinct attack class** from the existing `disclosure` set, which
+> covers LLM02 Sensitive Information Disclosure by asking the target outright to
+> dump its config / secrets and scoring the reply for credential shapes and
+> config keywords (`score_system_prompt_leak`). The `promptextract` set instead
+> targets **LLM07 specifically** and uses **bypass techniques** to slip the
+> hidden system / developer prompt out past the model's refusal:
+> instruction-hierarchy override, roleplay / persona reframe ("become
+> PromptMirror"), completion priming (continue `=== ORIGINAL SYSTEM INSTRUCTIONS
+> === \n You are`), verbatim "repeat the words above", ignore-previous,
+> translation laundering, delimiter confusion, debug-echo, and authority-audit
+> framing. Each probe instructs the model to **prepend a unique inert
+> confirmation token** (`OUIJA_SYSPROMPT_LEAK`) immediately before reproducing
+> its instructions. Detection is **context-aware** (a new
+> `detect_system_prompt_extraction` in `detect.py`, modelled on the
+> safety-bypass branch): the token alone is intentionally NOT a finding — a
+> hardened model that echoes the token while refusing, or emits the bare token
+> with no leaked instructions, must not false-positive. ouija fires a **HIGH**
+> `system_prompt_extraction` finding only when the confirmation token
+> **co-occurs with verbatim instruction-style scaffolding** (the actual
+> reproduced prompt) AND the reply is not a refusal. This adds a new detection
+> behavior (token + leaked-scaffolding co-occurrence) rather than reusing the
+> credential/keyword scorer. LLM07 business-impact text added to `report.py`;
+> category→attack-set summary mapping added to `scanner.py`; folded into the
+> `all` set; a vulnerable system-prompt-leak branch added to the mock. Composes
+> with `--inject-via` and `--request-template`. Covered by
+> `tests/test_promptextract.py` (14 tests, incl. the defining bare-token-echo and
+> refuses-while-echoing-token no-false-positive cases and a parametrized sweep
+> across token+scaffolding shapes). README + version bumped to 0.1.12.
+
+### Why this over Item 7
+Item 7 (multi-turn / Crescendo) remains the architectural reach goal deferred by
+the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. Item 16 fills the one remaining high-value OWASP-v2025 sub-vector
+that was only partially covered: LLM07 System Prompt Leakage was previously
+reachable only through the `disclosure` set's outright credential/keyword
+fishing; the **bypass-driven** extraction class (the technique attackers actually
+use, and the one bug-bounty programs pay for) had no dedicated set or detector.
+It is the same low-risk "new attack set, context-aware detector, new OWASP
+category" shape as Items 1, 8, 9, 10, 11, 12, 13, 14, and 15, and adds a distinct
+detection behavior (token + leaked-scaffolding co-occurrence). The remaining gap
+— LLM04 Data & Model Poisoning — stays a training-time concern out of a black-box
+endpoint fuzzer's probe surface, so Item 7 remains the next reach goal.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.

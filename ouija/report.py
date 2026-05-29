@@ -110,6 +110,20 @@ _IMPACT = {
         "compromised — software-supply-chain code execution with downstream "
         "blast radius (OWASP LLM03:2025 Supply Chain)."
     ),
+    "system_prompt_extraction": (
+        "The endpoint reproduces its hidden system / developer prompt verbatim "
+        "when pressed with a bypass technique — an instruction-hierarchy "
+        "override, a roleplay / persona reframe, completion priming, a 'repeat "
+        "the words above' request, or translation laundering — instead of "
+        "refusing. The leaked prompt exposes the application's guardrails, "
+        "allowed tools and capabilities, business rules, and any credentials or "
+        "URLs embedded directly in the prompt. An attacker who reads the system "
+        "prompt gains the blueprint to craft reliable follow-on prompt-injection "
+        "and jailbreak attacks, to impersonate the application's framing, and to "
+        "harvest any prompt-embedded secrets — a foothold that multiplies the "
+        "blast radius of every other attack class (OWASP LLM07:2025 System "
+        "Prompt Leakage)."
+    ),
 }
 
 _SEVERITY_ORDER = {

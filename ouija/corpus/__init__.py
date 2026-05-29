@@ -25,6 +25,7 @@ _SETS: dict[str, list[str]] = {
     "safetybypass": ["safetybypass.json"],
     "pii": ["pii.json"],
     "supplychain": ["supplychain.json"],
+    "promptextract": ["promptextract.json"],
     "all": [
         "injection.json",
         "disclosure.json",
@@ -37,6 +38,7 @@ _SETS: dict[str, list[str]] = {
         "safetybypass.json",
         "pii.json",
         "supplychain.json",
+        "promptextract.json",
     ],
 }
 
