@@ -504,6 +504,63 @@ Each result also carries a stable `partialFingerprints.ouijaFindingId`, so
 code-scanning deduplicates and tracks the same alert across runs instead of
 treating every scan as brand-new findings.
 
+## Webhook notifications (`--notify`)
+
+Where `--fail-on` *gates* a build and `--format sarif` *uploads* alerts,
+`--notify <url>` *pushes* a notification: after the scan completes, ouija fires a
+single HTTP `POST` carrying a compact JSON summary of the run to a webhook you
+control — a Slack/Teams incoming-webhook proxy, a ticketing intake, a chatops
+bot, or a CI fan-out endpoint. It turns a scan into an *alert* without anyone
+having to poll the report.
+
+```bash
+# Scan, gate the build on high/critical, AND ping the team webhook.
+ouija \
+  --target https://api.example.com/v1/chat \
+  --scope-file scope.txt \
+  --attack-set all \
+  --format json \
+  --fail-on high \
+  --notify https://hooks.example.com/services/T000/B000/xxxx \
+  | tee ouija-report.json
+```
+
+The POST body is a **bounded digest**, not the full report:
+
+```json
+{
+  "tool": "ouija",
+  "version": "0.1.19",
+  "event": "scan_complete",
+  "scan_id": "a1b2c3…",
+  "timestamp": "2026-05-29T12:00:00+00:00",
+  "target": "https://api.example.com/v1/chat",
+  "attack_set": "all",
+  "requests_sent": 312,
+  "findings_count": 2,
+  "top_severity": "high",
+  "attack_sets": {"injection": 1, "exfil": 1},
+  "findings": [
+    {"id": "…", "severity": "high", "category": "prompt_injection",
+     "title": "Prompt Injection via direct-override", "owasp": "LLM01:2025"}
+  ]
+}
+```
+
+It deliberately carries **no raw attack prompts, response excerpts, or
+multi-turn transcripts** — the webhook is the *alert*, the `--format json` report
+(which you can `tee` in the same run) is the *evidence*. This keeps the POST
+small and avoids spilling attack payloads or the per-run exfil canary into a chat
+channel. When the run is suppressed with `--baseline`, the webhook reflects the
+post-suppression findings, so you are alerted only on genuinely new findings.
+
+Delivery is **best-effort and non-fatal**: the URL is validated up front (a
+malformed URL exits `3` before any scan request), but a delivery failure at the
+end — a dead host, a timeout, or a non-`2xx` response — prints a warning to
+stderr and does **not** change the exit code. The `--fail-on` gate remains the
+build verdict; the webhook is a side channel. `--notify` is skipped entirely in
+`--plan` mode (a dry run sends nothing, so there is nothing to notify about).
+
 ## Scope-file format
 
 Newline-delimited authorized hosts. One `host` or `host:port` per line. Blank
