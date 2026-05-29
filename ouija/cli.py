@@ -4,7 +4,8 @@ Article II (CLI Interface Mandate): all functionality is reachable from this
 CLI — text/JSON in, text/JSON out.
 
 Exit codes:
-  0  scan completed (findings may or may not be present)
+  0  scan completed; no findings met the --fail-on threshold (or it is "none")
+  1  scan completed; at least one finding met the --fail-on threshold
   2  target out of scope (refused before any request is sent)
   3  usage / runtime error
 """
@@ -18,6 +19,7 @@ import sys
 from ouija import __version__
 from ouija.client import ResponsePathError, parse_response_path
 from ouija.corpus import ATTACK_SETS, load_attack_set
+from ouija.gate import FAIL_ON_CHOICES, FAIL_ON_NONE, gate_exit_code
 from ouija.indirect import DEFAULT_INJECT_VIA, INJECT_VIA_MODES
 from ouija.mutate import DEFAULT_MUTATOR_SET, MUTATOR_SETS
 from ouija.report import render
@@ -25,6 +27,7 @@ from ouija.scanner import run_scan
 from ouija.scope import ScopeError, assert_in_scope
 
 EXIT_OK = 0
+EXIT_FINDINGS = 1
 EXIT_OUT_OF_SCOPE = 2
 EXIT_ERROR = 3
 
@@ -155,6 +158,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--fail-on",
+        choices=list(FAIL_ON_CHOICES),
+        default=FAIL_ON_NONE,
+        dest="fail_on",
+        help=(
+            "CI/CD gating: exit with code 1 when at least one finding is at or "
+            "above this severity. Choices (ascending): info, low, medium, high, "
+            "critical, none (default). 'none' preserves the historical "
+            "exit-0-on-completion behaviour. The report is still printed either "
+            "way; only the exit code changes — so a pipeline can `ouija ... "
+            "--fail-on high` and break the build on a high/critical finding while "
+            "still archiving the report. Scope (2) and usage/runtime (3) errors "
+            "take precedence over this gate."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"ouija {__version__}",
@@ -244,7 +263,12 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
 
     print(render(result, args.fmt))
-    return EXIT_OK
+    return gate_exit_code(
+        result,
+        args.fail_on,
+        ok_code=EXIT_OK,
+        findings_code=EXIT_FINDINGS,
+    )
 
 
 if __name__ == "__main__":
