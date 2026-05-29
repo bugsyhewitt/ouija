@@ -594,6 +594,49 @@ architecture change.
 
 ---
 
+## Item 18 — Dry-run / report-only plan mode (`--plan`) — ✅ IMPLEMENTED (Rotation 25)
+
+> **Shipped:** a dry-run / report-only mode that enumerates **exactly what a scan
+> will send — without sending a single request to the target**. New module
+> `ouija/plan.py` with a pure, I/O-free `build_plan(...)` that re-derives the
+> scanner's own fan-out math (`patterns × variants(mutator_set) × repeats` per
+> attack-set category in single-shot mode; per-ladder turn budget in
+> `--multi-turn` mode) and returns a dedicated `ScanPlan` pydantic model —
+> deliberately **not** `ScanResult`, so a downstream triage consumer can never
+> mistake a zero-finding preview for a result (the JSON carries `"kind": "plan"`
+> and has no `findings` array). One CLI flag, `--plan`: it runs *after* the scope
+> gate and all fail-fast validation (`--request-template`, `--response-path`,
+> `--baseline` path), so a plan is only ever produced for an authorized,
+> in-scope, validly-configured run, then prints the plan and exits `0` having
+> touched no network. `--format json` emits the machine-readable plan for CI /
+> triage integration (`jq '.total_requests'`, request-budget gating, attack-
+> surface change review in a PR); every other `--format` falls back to a stable
+> human-readable text summary, since the finding-shaped h1md/sarif renderers are
+> meaningless for a preview. The reported `total_requests` **matches the real
+> run's `patterns_sent` exactly** (verified end-to-end in a test), so it is safe
+> to size cost / blast-radius before spending requests against production.
+> Honours `--attack-set`, `--mutators`, `--repeats`, `--inject-via`, and
+> `--multi-turn`. Covered by `tests/test_plan.py` (18 tests: single-shot math,
+> 9-variant `all`-mutator expansion, independent cross-check against the real
+> `mutate()` generator, per-category grouping, multi-turn ladder enumeration,
+> JSON/text renderers, and end-to-end CLI tests including a **zero-requests-sent**
+> assertion against a hit-counting mock server, scope-gate enforcement, and
+> template validation still firing under `--plan`). README + version bumped to
+> 0.1.18. No new dependency, no architecture change, no attack corpus touched.
+
+### Why this over a new attack class
+The remaining roadmap items are new attack *classes*; this rotation closes a
+**workflow / operability** gap that compounds with every attack class already
+shipped. The `--mutators all` × `--repeats N` × 13-category `all` run now issues
+thousands of requests — a hunter (and a CI pipeline) needs to size that blast
+radius *before* firing it at a production endpoint they are authorized but
+cost-accountable for. `--plan` is the standard dry-run primitive mature scanners
+ship (terraform `plan`, `nmap` host-list `-sL`, ansible `--check`); ouija now has
+the LLM-fuzzer equivalent, keyed on its own deterministic fan-out so the preview
+and the real run can never disagree. Self-contained, no network, no new dep.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.

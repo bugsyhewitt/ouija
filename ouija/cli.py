@@ -28,6 +28,7 @@ from ouija.corpus import ATTACK_SETS, load_attack_set
 from ouija.gate import FAIL_ON_CHOICES, FAIL_ON_NONE, gate_exit_code
 from ouija.indirect import DEFAULT_INJECT_VIA, INJECT_VIA_MODES
 from ouija.mutate import DEFAULT_MUTATOR_SET, MUTATOR_SETS
+from ouija.plan import build_plan, render_plan
 from ouija.report import render
 from ouija.scanner import run_scan
 from ouija.scope import ScopeError, assert_in_scope
@@ -233,6 +234,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--plan",
+        action="store_true",
+        dest="plan",
+        help=(
+            "Dry-run / report-only mode: print exactly what the scan WILL send — "
+            "the total request count, the per-attack-set breakdown (patterns x "
+            "variants x repeats), and the mode (single-shot vs multi-turn) — "
+            "WITHOUT sending a single request to the target. The scope gate still "
+            "runs first, so a plan is only ever produced for an in-scope host. "
+            "Pair with '--format json' for a machine-readable plan to feed CI / "
+            "triage tooling (sizing a run, gating on request budget, change "
+            "review); any other --format prints a human-readable summary. The "
+            "request count it reports matches the real run exactly, so you can "
+            "size cost/blast-radius before spending requests against production. "
+            "Honours --attack-set, --mutators, --repeats, --inject-via, and "
+            "--multi-turn; exits 0."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"ouija {__version__}",
@@ -313,6 +333,23 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as exc:
         print(f"error: failed to load attack set: {exc}", file=sys.stderr)
         return EXIT_ERROR
+
+    # Dry-run / report-only mode: enumerate what the scan WOULD send and exit,
+    # sending nothing. All fail-fast validation above (template, response-path,
+    # baseline path, scope) has already run, so a plan only previews a valid,
+    # in-scope run. No network is touched here.
+    if args.plan:
+        plan = build_plan(
+            target=args.target,
+            attack_set_name=args.attack_set,
+            loaded=loaded,
+            repeats=args.repeats,
+            mutator_set=args.mutators,
+            inject_via=args.inject_via,
+            multi_turn=args.multi_turn,
+        )
+        print(render_plan(plan, args.fmt))
+        return EXIT_OK
 
     try:
         result = run_scan(
