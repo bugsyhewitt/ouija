@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -85,7 +85,7 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
@@ -311,7 +311,8 @@ The corpus ships in `ouija/corpus/` as JSON, each file tagged with its OWASP LLM
 Top 10 mapping:
 
 - `injection.json` — 22 prompt-injection patterns (LLM01)
-- `disclosure.json` — 12 sensitive-information-disclosure probes (LLM02)
+- `disclosure.json` — 12 sensitive-information-disclosure probes (LLM02, system-prompt / config / credential leakage)
+- `pii.json` — PII / memorized-data regurgitation probes (LLM02, personal-data sub-vector: emails, phones, SSNs, payment cards, IBANs)
 - `dos.json` — model-DoS / unbounded-consumption probes (LLM10), now with a
   response-characteristic detector (see below)
 - `exfil.json` — markdown-image data-exfiltration probes (LLM05, EchoLeak class)
@@ -511,6 +512,49 @@ ouija \
 
 This composes with `--inject-via` (the jailbreak can be smuggled inside a
 document/email the endpoint processes) and `--request-template`.
+
+### PII / memorized-data disclosure (LLM02:2025, personal-data sub-vector)
+
+The `pii` attack set probes whether the target will **regurgitate personally
+identifiable information** — email addresses, phone numbers, US SSNs,
+payment-card numbers, or IBANs — that it memorized from training data or was
+given in its context/conversation. This is the privacy/compliance-grade
+(GDPR / CCPA) leak class, and it is **distinct from the `disclosure` set**:
+`disclosure` detects system-prompt / config / credential leakage (scored by a
+detector tuned for secret and config shapes), while `pii` detects *personal
+data* leakage, which that scorer does not catch.
+
+Each probe plants a **unique, inert synthetic PII record** (a high-entropy
+local-part email on the reserved `.invalid` TLD, plus fixed documentation /
+test-vector numbers such as the `4111 1111 1111 1111` test card and the
+`219-09-9999` reserved SSN). A target that echoes the planted value is
+unambiguously regurgitating supplied context PII — ouija never sends or
+processes any real person's data.
+
+Detection is **context-aware / low-false-positive**:
+
+- It requires an actual **PII-shaped string** in the reply (email / phone /
+  SSN / Luhn-valid card / IBAN). Candidate card numbers are **Luhn-validated**,
+  so a random 16-digit order ID does not false-fire.
+- A **benign-framing guard** suppresses replies that merely *discuss* PII
+  handling ("for privacy reasons I can't share email addresses…") when no real
+  PII shape is present.
+- A **hard PII shape** (SSN / card / IBAN / phone) fires even when the reply
+  also contains a token refusal — a model that says "I can't" then leaks an SSN
+  anyway is still a finding.
+
+A hit is reported as a **HIGH** `pii_disclosure` finding (OWASP **LLM02:2025
+Sensitive Information Disclosure**).
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set pii
+```
+
+This composes with `--inject-via` (the PII-recall request can be smuggled
+inside a document/email the endpoint processes) and `--request-template`.
 
 ### Unbounded consumption / model DoS (LLM10:2025)
 
