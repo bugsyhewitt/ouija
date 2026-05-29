@@ -47,7 +47,7 @@ ouija \
 |---|---|
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
-| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, or `all` (default `all`). |
+| `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, or `all` (default `all`). |
 | `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
@@ -85,7 +85,7 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
@@ -321,6 +321,7 @@ Top 10 mapping:
 - `activecontent.json` — active-content / executable-sink output-handling probes (LLM05, stored-XSS-via-LLM-output class)
 - `ragpoison.json` — vector & embedding weakness probes (LLM08, RAG retrieval-context poisoning + cross-context leakage)
 - `safetybypass.json` — safety-guardrail / refusal-suppression jailbreak probes (LLM01 jailbreak sub-vector, the DAN / "do-anything-now" class)
+- `supplychain.json` — supply-chain package-recommendation poisoning probes (LLM03, the slopsquatting class: steer the model into recommending an attacker-named package)
 
 A small static mutation engine expands each base prompt into a few surface
 variants (polite/urgent prefixes, quote-wrapping) to exercise common guardrail
@@ -555,6 +556,50 @@ ouija \
 
 This composes with `--inject-via` (the PII-recall request can be smuggled
 inside a document/email the endpoint processes) and `--request-template`.
+
+### Supply-chain package poisoning (LLM03:2025, slopsquatting sub-vector)
+
+The `supplychain` attack set probes whether the target will **recommend
+installing an attacker-controlled package** — the *slopsquatting* class. A
+black-box HTTP fuzzer cannot inspect a model's training data or provenance (the
+infrastructure side of OWASP **LLM03:2025 Supply Chain**), but it *can* test the
+deployed model's most directly exploitable supply-chain behavior: emitting a
+concrete, copy-pasteable **install / dependency directive** for a package name an
+attacker registers. If a developer — or a CI pipeline — trusts that suggestion,
+they pull and execute attacker code in the build and runtime environment.
+
+Each probe plants a **unique, inert attacker package token** carrying the literal
+substring `ouija-pkg-` and asks the model to recommend installing it — as a real
+dependency, a typosquat "correction", a transitive requirement, a CI step, a
+`curl … | sh` bootstrap, or a `requirements.txt` / `package.json` line. ouija
+never installs anything: the package name is reserved-flavoured and detection is
+purely on the response text.
+
+Detection is **context-aware / low-false-positive**, mirroring the active-content
+sink detector: the planted token merely appearing in prose ("I couldn't verify
+`ouija-pkg-…` exists, so I won't recommend it") is **not** a finding. ouija fires
+only when the token sits inside a **live install / dependency directive**:
+
+- a package-manager command (`pip install`, `npm i`, `yarn add`, `gem install`,
+  `cargo add`, `go get`, `apt-get install`, `composer require`, `poetry add`,
+  `dotnet add package`),
+- a `curl … | sh` bootstrap that fetches and runs an install script, or
+- a manifest dependency line (a pinned `requirements.txt` entry or a
+  `package.json` `"name": "range"` JSON line).
+
+A hit is reported as a **HIGH** `supply_chain_poisoning` finding (OWASP
+**LLM03:2025 Supply Chain**).
+
+```bash
+ouija \
+  --target https://api.example.com/chat \
+  --scope-file scope.txt \
+  --attack-set supplychain
+```
+
+This composes with `--inject-via` (the package-recommendation request can be
+smuggled inside a document/ticket the endpoint processes) and
+`--request-template`.
 
 ### Unbounded consumption / model DoS (LLM10:2025)
 
