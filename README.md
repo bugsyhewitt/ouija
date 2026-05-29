@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default) or `h1md` (HackerOne markdown). See [Structured JSON output](#structured-json-output-format-json). |
+| `--format` | `json` (structured machine-readable report, default), `h1md` (HackerOne markdown), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json) and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -337,6 +337,47 @@ Severities are ordered `info < low < medium < high < critical`, so
 `--fail-on medium` trips on medium, high, *and* critical findings.
 Scope (`2`) and usage/runtime (`3`) errors always take precedence over the
 gate — a misconfigured run never masquerades as a clean pass.
+
+## SARIF output (`--format sarif`)
+
+`--format sarif` emits a single [SARIF 2.1.0](https://sarifweb.azurewebsites.net/)
+document — the OASIS-standard format that GitHub Advanced Security's
+code-scanning, Azure DevOps, and most security dashboards ingest directly. Where
+`--fail-on` *gates* a pipeline (exit non-zero on a finding), SARIF is its
+companion: it lets the same run *upload* its findings so they surface as
+code-scanning alerts with severity, rule documentation, and the OWASP LLM
+Top-10 mapping — no bespoke parsing of ouija's native JSON required.
+
+Each distinct attack **category** present in the findings becomes a SARIF `rule`
+(carrying the category's business-impact text as the rule description), and each
+finding becomes a SARIF `result` referencing its rule. Severities map to both the
+SARIF `level` (`note`/`warning`/`error`) and the numeric GitHub
+`security-severity` property (`0.0`–`10.0`), so alerts bucket correctly in the
+code-scanning UI. ouija probes a network endpoint rather than a source file, so
+results carry no invented file path; the tested URL lives in the run's
+`properties.target` and the `automationDetails.id`.
+
+```yaml
+# .github/workflows/ouija.yml — gate AND upload in one run.
+- name: ouija LLM endpoint scan
+  run: |
+    ouija \
+      --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --attack-set all \
+      --format sarif \
+      --fail-on high \
+      > ouija.sarif
+  continue-on-error: true   # let the upload step run even if --fail-on trips
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: ouija.sarif
+```
+
+Each result also carries a stable `partialFingerprints.ouijaFindingId`, so
+code-scanning deduplicates and tracks the same alert across runs instead of
+treating every scan as brand-new findings.
 
 ## Scope-file format
 

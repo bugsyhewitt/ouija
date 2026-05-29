@@ -243,4 +243,9 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_json(result)
     if fmt == "h1md":
         return to_h1md(result)
+    if fmt == "sarif":
+        # Imported lazily so the SARIF code path is only loaded when requested.
+        from ouija.sarif import to_sarif
+
+        return to_sarif(result)
     raise ValueError(f"unknown format '{fmt}'")
