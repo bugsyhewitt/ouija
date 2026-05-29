@@ -129,7 +129,19 @@ Indirect injection is the higher-severity, higher-bounty variant and the mechani
 
 ---
 
-## Item 7 — Multi-turn / Crescendo conversational attack mode (Priority: LOW for now)
+## Item 7 — Multi-turn / Crescendo conversational attack mode (Priority: LOW for now) — ✅ IMPLEMENTED
+
+> **Shipped:** `--multi-turn` activates a stateful, scripted-ladder Crescendo
+> driver in `ouija/conversation.py`. It depends on the (already-landed) Item 3
+> `messages`-array templating: `TargetClient.send_conversation` sends an
+> accumulating role/content history (default OpenAI-style `{"messages": [...]}`,
+> or wrapped via a `"{messages}"` request-template placeholder), detection runs
+> after every turn, and the first complying turn ends the conversation. Findings
+> carry a `transcript` and `turn_succeeded`; the h1md report renders the full
+> conversation under Steps to reproduce. First cut is deterministic scripted
+> escalation ladders (injection / safety-bypass / disclosure) — no
+> adversarial-LLM-in-the-loop, keeping ouija dependency-thin. Tests in
+> `tests/test_multiturn.py`.
 
 > **Scoping pass (Rotation 11):** assessed and DEFERRED. Item 7 is not
 > self-contained for a single improve lap — it requires turning ouija's

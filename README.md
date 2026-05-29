@@ -55,6 +55,7 @@ ouija \
 | `--response-path` | Dotted/bracket selector pinning where the reply text lives in the response JSON, e.g. `choices.0.message.content`. Use when the target returns a non-standard response shape — see below. |
 | `--mutators` | `surface` (default) or `all`. `all` adds encoding/obfuscation variants that probe representation-level guardrail bypasses — see below. |
 | `--inject-via` | `direct` (default), `document`, `webpage`, or `email`. Delivers the attack indirectly — nested inside data the endpoint processes — instead of as a direct prompt. See below. |
+| `--multi-turn` | Run scripted **Crescendo** conversational attacks that escalate across several turns instead of the stateless single-shot probes. See below. |
 | `--fail-on` | CI/CD gating. Exit `1` when at least one finding is at or above this severity: `info`, `low`, `medium`, `high`, `critical`, or `none` (default). `none` keeps the historical exit-`0`-on-completion behaviour. See [Exit codes & CI gating](#exit-codes--cicd-gating). |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
@@ -252,6 +253,53 @@ The attack — including any detection marker and any exfil canary — is preser
 keep working unchanged. This composes with every other flag: `--inject-via email`
 combined with `--attack-set exfil` reproduces the EchoLeak chain (indirect
 delivery + markdown-image data exfiltration).
+
+## Multi-turn / Crescendo attacks (`--multi-turn`)
+
+By default every ouija probe is a single shot: one request, one reply, scored
+independently. That under-reports against hardened targets, because the strongest
+2025 jailbreaks are **conversational** — the Crescendo / GOAT technique opens
+benign and gradually steers the model across several turns until it complies.
+Reported success rates jump from ~4% single-turn to ~78% multi-turn against the
+same hardened model; a scanner that only sends one shot never sees that gap.
+
+`--multi-turn` drives scripted **escalation ladders**. Each ladder is a fixed
+sequence of conversation turns that build toward the same inert confirmation
+marker the single-shot corpus uses — so a multi-turn finding is directly
+comparable to its single-shot sibling. The driver sends turn 1, appends the
+model's reply to the history, sends turn 2 with the full history, and so on,
+running detection after every turn and stopping at the first turn that complies.
+
+```bash
+ouija \
+  --target https://api.example.com/v1/chat/completions \
+  --scope-file scope.txt \
+  --multi-turn
+```
+
+Multi-turn mode sends the conversation as a `messages` array, so it works against
+OpenAI/Anthropic-style endpoints out of the box. To wrap the array in custom
+fields (model name, temperature, etc.), pass a `--request-template` containing the
+quoted `"{messages}"` placeholder:
+
+```bash
+ouija \
+  --target https://api.example.com/v1/chat/completions \
+  --scope-file scope.txt \
+  --multi-turn \
+  --request-template '{"model": "gpt-4o", "messages": "{messages}", "temperature": 0}' \
+  --response-path choices.0.message.content
+```
+
+Each ladder is reported as **at most one finding**, annotated with `turn_succeeded`
+(the 1-based turn where compliance occurred) and the full `transcript` (the
+ordered role/content turn history). The `h1md` report renders the whole
+conversation under *Steps to reproduce* so a triager can replay the exact
+escalation. By design this is a first cut using **deterministic scripted ladders**
+— no adversarial-LLM-in-the-loop — keeping ouija dependency-thin and reproducible.
+
+Multi-turn is a distinct, stateful code path: it ignores `--attack-set`,
+`--mutators`, `--repeats`, and `--inject-via`, which are single-shot concepts.
 
 ## Exit codes & CI/CD gating
 

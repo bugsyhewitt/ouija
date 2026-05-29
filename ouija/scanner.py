@@ -11,6 +11,7 @@ import httpx
 from ouija import __version__
 from ouija.canary import CANARY_PLACEHOLDER, make_canary
 from ouija.client import TargetClient
+from ouija.conversation import ladders, run_ladder
 from ouija.corpus import LoadedSet
 from ouija.detect import detect
 from ouija.indirect import DEFAULT_INJECT_VIA, wrap_indirect
@@ -56,6 +57,7 @@ async def _run_async(
     repeats: int = 1,
     mutator_set: str = DEFAULT_MUTATOR_SET,
     inject_via: str = DEFAULT_INJECT_VIA,
+    multi_turn: bool = False,
 ) -> ScanResult:
     client = TargetClient(
         target,
@@ -69,6 +71,15 @@ async def _run_async(
         attack_set=attack_set_name,
         patterns_sent=0,
     )
+
+    # Multi-turn / Crescendo mode is a separate, stateful code path: it drives
+    # scripted escalation ladders sequentially (conversations are inherently
+    # ordered) instead of the stateless single-shot fan-out below. It ignores the
+    # attack-set corpus, mutators, repeats, and inject-via — those are single-shot
+    # concepts — and reports each ladder as at most one finding.
+    if multi_turn:
+        return await _run_multi_turn(client, result)
+
     sem = asyncio.Semaphore(concurrency)
 
     # One per-run exfiltration canary shared by all canary patterns this scan.
@@ -164,6 +175,39 @@ async def _run_async(
     return result
 
 
+async def _run_multi_turn(client: TargetClient, result: ScanResult) -> ScanResult:
+    """Drive every scripted Crescendo ladder and collect at most one finding each.
+
+    Ladders are run sequentially because each is an ordered, stateful
+    conversation (history must accumulate turn-by-turn). ``patterns_sent`` counts
+    the total conversation turns actually issued so the report's request count
+    stays meaningful.
+    """
+    all_ladders = ladders()
+    turns_sent = 0
+    async with httpx.AsyncClient() as http:
+        for ladder in all_ladders:
+            outcome = await run_ladder(http, client, ladder)
+            # Each transcript holds 2 entries (user+assistant) per issued turn.
+            turns_sent += len(outcome.transcript) // 2
+            if outcome.finding is not None:
+                result.findings.append(outcome.finding)
+
+    result.patterns_sent = turns_sent
+
+    per_set: dict[str, int] = {}
+    for finding in result.findings:
+        set_name = _CATEGORY_TO_ATTACK_SET.get(finding.category, finding.category)
+        per_set[set_name] = per_set.get(set_name, 0) + 1
+
+    result.summary = ScanSummary(
+        total=result.patterns_sent,
+        successful=len(result.findings),
+        attack_sets=per_set,
+    )
+    return result
+
+
 def run_scan(
     target: str,
     attack_set_name: str,
@@ -175,6 +219,7 @@ def run_scan(
     repeats: int = 1,
     mutator_set: str = DEFAULT_MUTATOR_SET,
     inject_via: str = DEFAULT_INJECT_VIA,
+    multi_turn: bool = False,
 ) -> ScanResult:
     """Synchronous entry point that drives the async probe loop."""
     return asyncio.run(
@@ -189,5 +234,6 @@ def run_scan(
             repeats=repeats,
             mutator_set=mutator_set,
             inject_via=inject_via,
+            multi_turn=multi_turn,
         )
     )

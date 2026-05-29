@@ -158,6 +158,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--multi-turn",
+        action="store_true",
+        dest="multi_turn",
+        help=(
+            "Multi-turn / Crescendo conversational attack mode. Instead of the "
+            "stateless single-shot probes, ouija drives scripted escalation "
+            "ladders that open benign and steer the target across several "
+            "conversation turns until it complies — the Crescendo/GOAT technique "
+            "that defeats single-turn guardrails (success rates jump from ~4%% "
+            "single-turn to ~78%% multi-turn against hardened targets). Each "
+            "ladder is reported as at most one finding carrying the full "
+            "transcript and the turn number where compliance occurred. This mode "
+            "sends conversation history as a messages array, so it works against "
+            "OpenAI/Anthropic-style endpoints out of the box (use "
+            "--request-template with a \"{messages}\" placeholder to wrap the "
+            "array in custom fields). It ignores --attack-set, --mutators, "
+            "--repeats, and --inject-via, which are single-shot concepts."
+        ),
+    )
+    parser.add_argument(
         "--fail-on",
         choices=list(FAIL_ON_CHOICES),
         default=FAIL_ON_NONE,
@@ -257,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             repeats=args.repeats,
             mutator_set=args.mutators,
             inject_via=args.inject_via,
+            multi_turn=args.multi_turn,
         )
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
         print(f"error: scan failed: {exc}", file=sys.stderr)

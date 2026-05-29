@@ -73,6 +73,13 @@ class Finding(BaseModel):
     attempts: int = 1
     successes: int = 1
     success_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Multi-turn / Crescendo fields — populated only when --multi-turn produced
+    # the finding. `transcript` is the ordered role/content turn history that led
+    # to compliance; `turn_succeeded` is the 1-based index of the turn whose
+    # reply tripped detection. Both are None for ordinary single-shot findings,
+    # so the JSON schema is unchanged for the default workflow.
+    transcript: Optional[list[dict[str, str]]] = None
+    turn_succeeded: Optional[int] = None
 
 
 class ScanSummary(BaseModel):
