@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 
-from ouija.models import ScanResult, Severity
+from ouija.models import Finding, ScanResult, Severity
 
 # Bug-bounty business-impact framing per category.
 _IMPACT = {
@@ -349,6 +350,193 @@ def to_h1md(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
+# Per-severity accent colours for the HTML report. Chosen for clear visual
+# triage (critical/high jump out) and sufficient contrast against a light card
+# background; values are inlined into the self-contained <style> block so the
+# report needs no external stylesheet, font, or asset to render.
+_SEVERITY_COLOR: dict[Severity, str] = {
+    Severity.CRITICAL: "#b30000",
+    Severity.HIGH: "#d9480f",
+    Severity.MEDIUM: "#b8860b",
+    Severity.LOW: "#1c7ed6",
+    Severity.INFO: "#5c6770",
+}
+
+
+def _esc(text: str) -> str:
+    """HTML-escape *text* for safe interpolation into element content/attributes.
+
+    Every value that originates from the target's response or an attack prompt
+    is attacker-influenced, so it MUST be escaped before being placed into the
+    HTML report — otherwise a finding's response_excerpt containing ``<script>``
+    (exactly the active-content class ouija detects) would execute when the
+    report is opened in a browser. :func:`html.escape` with ``quote=True``
+    neutralises ``< > & " '`` so the value can sit safely in both element bodies
+    and quoted attributes.
+    """
+    return html.escape(str(text), quote=True)
+
+
+def _html_transcript(f: Finding) -> str:
+    """Render a multi-turn finding's transcript as an escaped <pre> block."""
+    lines: list[str] = []
+    turn_no = 0
+    for msg in f.transcript or []:
+        if msg["role"] == "user":
+            turn_no += 1
+            lines.append(f"[turn {turn_no}] user: {msg['content']}")
+        else:
+            lines.append(f"          assistant: {msg['content']}")
+    return _esc("\n".join(lines))
+
+
+def to_html(result: ScanResult) -> str:
+    """Render the scan as a single, self-contained HTML document.
+
+    Where ``--format h1md`` emits HackerOne markdown a hunter pastes into a
+    report form, and ``json``/``jsonl``/``csv``/``sarif`` feed machines,
+    ``--format html`` is the *shareable artifact*: one file with embedded CSS
+    (no external stylesheet, font, JS, or network asset) that opens in any
+    browser. Redirect it to ``report.html`` and hand it to a stakeholder, attach
+    it to a ticket, or archive it as the human-readable run record.
+
+    [Worker decision (Phase 2 / R29): chose ``--format html`` over
+    ``--format markdown-table``. Both were unshipped post-v0.1 directions; HTML
+    is the more defensible single improvement because it is a *complete*
+    deliverable — a triager or non-technical stakeholder opens it directly in a
+    browser with no markdown-rendering toolchain and no question of which
+    flavour renders tables. Like every prior format (json/jsonl/csv/sarif/h1md)
+    it is a pure function over the final :class:`~ouija.models.ScanResult`, so it
+    touches no scanner state and no architecture. ``--schedule`` stays deferred
+    (it requires a stateful daemon, per the prior R26/R27/R28 assessments).
+
+    SECURITY: every attacker-influenced value (prompts, response excerpts,
+    evidence, transcripts) is HTML-escaped via :func:`_esc` before insertion, so
+    a finding whose response contains live ``<script>``/HTML — precisely the
+    active-content sink ouija reports — cannot execute when the report is
+    opened.]
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+
+    style = (
+        "body{font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
+        "margin:0;background:#f4f5f7;color:#1a1d21}"
+        ".wrap{max-width:920px;margin:0 auto;padding:2rem 1.25rem}"
+        "h1{font-size:1.6rem;margin:0 0 .25rem}"
+        ".meta{color:#5c6770;font-size:.9rem;margin-bottom:1.5rem}"
+        ".card{background:#fff;border:1px solid #e3e6ea;border-radius:8px;"
+        "padding:1.25rem 1.5rem;margin-bottom:1.25rem;"
+        "box-shadow:0 1px 2px rgba(0,0,0,.04)}"
+        ".card h2{font-size:1.15rem;margin:0 0 .75rem}"
+        ".badge{display:inline-block;color:#fff;font-size:.72rem;font-weight:700;"
+        "letter-spacing:.04em;padding:.15rem .5rem;border-radius:4px;"
+        "text-transform:uppercase;vertical-align:middle;margin-right:.5rem}"
+        ".kv{margin:.15rem 0;color:#3a3f45;font-size:.92rem}"
+        ".kv b{color:#1a1d21}"
+        "code{background:#f0f1f3;padding:.1rem .3rem;border-radius:3px;"
+        "font-size:.85em}"
+        "pre{background:#1e2126;color:#e6e6e6;padding:.9rem 1rem;border-radius:6px;"
+        "overflow:auto;font-size:.85rem;white-space:pre-wrap;word-break:break-word}"
+        ".section{font-size:.8rem;font-weight:700;text-transform:uppercase;"
+        "letter-spacing:.05em;color:#5c6770;margin:1rem 0 .35rem}"
+        ".impact{color:#3a3f45}"
+        ".clean{background:#fff;border:1px solid #e3e6ea;border-radius:8px;"
+        "padding:2rem;text-align:center;color:#2b8a3e;font-weight:600}"
+    )
+
+    out: list[str] = []
+    out.append("<!doctype html>")
+    out.append('<html lang="en">')
+    out.append("<head>")
+    out.append('<meta charset="utf-8">')
+    out.append('<meta name="viewport" content="width=device-width,initial-scale=1">')
+    out.append(f"<title>ouija findings — {_esc(result.target)}</title>")
+    out.append(f"<style>{style}</style>")
+    out.append("</head>")
+    out.append("<body>")
+    out.append('<div class="wrap">')
+    out.append(f"<h1>ouija findings report</h1>")
+    out.append(
+        '<p class="meta">Target <code>{target}</code> &middot; '
+        "generated by ouija v{version} &middot; attack set "
+        "<code>{aset}</code> &middot; {sent} attack request(s) sent &middot; "
+        "{n} finding(s)</p>".format(
+            target=_esc(result.target),
+            version=_esc(result.version),
+            aset=_esc(result.attack_set),
+            sent=result.patterns_sent,
+            n=len(findings),
+        )
+    )
+
+    if not findings:
+        out.append(
+            '<div class="clean">No findings. The target refused or sanitized '
+            "all probes in this attack set.</div>"
+        )
+        out.append("</div></body></html>")
+        return "\n".join(out)
+
+    for idx, f in enumerate(findings, start=1):
+        color = _SEVERITY_COLOR.get(f.severity, "#5c6770")
+        out.append('<div class="card">')
+        out.append(
+            '<h2><span class="badge" style="background:{c}">{sev}</span>'
+            "Finding {i}: {title}</h2>".format(
+                c=color,
+                sev=_esc(f.severity.value),
+                i=idx,
+                title=_esc(f.title),
+            )
+        )
+        out.append(
+            f'<p class="kv"><b>Category:</b> {_esc(f.category)} &middot; '
+            f"<b>OWASP:</b> {_esc(f.owasp)} &middot; "
+            f"<b>Confidence:</b> {f.confidence:.0%}</p>"
+        )
+        if f.attempts > 1:
+            out.append(
+                f'<p class="kv"><b>Reliability:</b> {f.successes}/{f.attempts} '
+                f"attempts ({f.success_rate:.0%})</p>"
+            )
+        out.append(
+            f'<p class="kv"><b>Finding ID:</b> <code>{_esc(f.id)}</code> '
+            f"&middot; <b>Pattern:</b> <code>{_esc(f.pattern_id)}</code> "
+            f"(technique: {_esc(f.technique)})</p>"
+        )
+
+        out.append('<div class="section">Summary</div>')
+        out.append(f"<p>{_esc(f.evidence)}</p>")
+
+        out.append('<div class="section">Steps to reproduce</div>')
+        if f.transcript:
+            out.append(
+                "<p>Multi-turn (Crescendo) finding — the target complied on "
+                f"turn {f.turn_succeeded} after conversational escalation. "
+                "Replay each user turn in order, carrying the full history:</p>"
+            )
+            out.append(f"<pre>{_html_transcript(f)}</pre>")
+        else:
+            out.append(
+                f"<p>1. Send this prompt to <code>{_esc(result.target)}</code>:</p>"
+            )
+            out.append(f"<pre>{_esc(f.request_prompt)}</pre>")
+            out.append("<p>2. Observe the response, which contained:</p>")
+            out.append(f"<pre>{_esc(f.response_excerpt)}</pre>")
+
+        out.append('<div class="section">Business impact</div>')
+        out.append(
+            f'<p class="impact">'
+            f'{_esc(_IMPACT.get(f.category, "See category description."))}</p>'
+        )
+        out.append("</div>")
+
+    out.append("</div></body></html>")
+    return "\n".join(out)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -358,6 +546,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_csv(result)
     if fmt == "h1md":
         return to_h1md(result)
+    if fmt == "html":
+        return to_html(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif
