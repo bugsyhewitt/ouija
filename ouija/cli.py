@@ -66,10 +66,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "h1md"],
+        choices=["json", "h1md", "sarif"],
         default="json",
         dest="fmt",
-        help="Output format: json or HackerOne-style markdown (default: json).",
+        help=(
+            "Output format: 'json' (structured machine-readable, default), "
+            "'h1md' (HackerOne-style markdown), or 'sarif' (SARIF 2.1.0 for "
+            "GitHub code-scanning / CI security dashboards). SARIF maps each "
+            "attack category to a rule and each finding to a result with a "
+            "GitHub-compatible security-severity; pair it with --fail-on to "
+            "both gate the build and upload alerts."
+        ),
     )
     parser.add_argument(
         "--api-key-env",
