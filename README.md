@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -230,6 +230,42 @@ metric (they read `1`/`1`/`1.0` for single-shot findings). Multi-turn
 (`--multi-turn`) transcripts are **not** flattened into a CSV cell — the row still
 appears, identified by its `id`/`pattern_id`; read `--format json` or `h1md` for
 the full conversation.
+
+## HTML output (`--format html`)
+
+Where `json`/`jsonl`/`csv`/`sarif` feed machines and `h1md` is HackerOne markdown
+a hunter pastes into a report form, **`--format html`** is the *shareable
+artifact*: a single self-contained HTML document with embedded CSS and **no
+external assets** (no stylesheet, font, JS, or remote URL). Redirect it to
+`report.html` and hand it to a stakeholder, attach it to a ticket, or archive it
+as the human-readable run record. It opens in any browser with no rendering
+toolchain.
+
+```bash
+ouija --target https://api.example.com/v1/chat \
+  --scope-file scope.txt \
+  --attack-set all \
+  --format html > report.html
+
+# Open it
+xdg-open report.html       # Linux
+open report.html           # macOS
+```
+
+The document layout: a header card with the target, ouija version, attack set,
+and finding count; then one card per finding in descending-severity order (same
+ordering as `h1md` and `csv`), with a coloured severity badge, the OWASP
+mapping, the finding ID, the steps-to-reproduce prompt and response excerpt (or
+the full multi-turn transcript for Crescendo findings), and the business-impact
+narrative. A zero-finding run still renders a valid document with a "No
+findings" card.
+
+**Security.** Every attacker-influenced value — the request prompt, the response
+excerpt, the evidence string, and any multi-turn transcript content — is
+HTML-escaped before insertion. A finding whose response captured live
+`<script>` or `<img onerror=…>` (precisely the active-content sink ouija
+detects under `activecontent` / `LLM05`) is rendered as visible text, not
+executed, when the report is opened.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 

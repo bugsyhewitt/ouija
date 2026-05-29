@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -87,11 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
             "row per finding, RFC-4180 quoted and severity-sorted — paste it "
             "straight into a spreadsheet / ticket importer to sort, filter, and "
             "assign findings; the header is emitted even on a zero-finding run), "
-            "'h1md' (HackerOne-style "
-            "markdown), or 'sarif' (SARIF 2.1.0 for GitHub code-scanning / CI "
-            "security dashboards). SARIF maps each attack category to a rule and "
-            "each finding to a result with a GitHub-compatible security-severity; "
-            "pair it with --fail-on to both gate the build and upload alerts."
+            "'h1md' (HackerOne-style markdown), 'html' (a single self-contained "
+            "HTML document with embedded CSS and no external assets — redirect it "
+            "to report.html and open it in any browser, attach it to a ticket, or "
+            "hand it to a non-technical stakeholder; all attacker-influenced "
+            "values are HTML-escaped so a captured <script> response cannot "
+            "execute when the report is viewed), or 'sarif' (SARIF 2.1.0 for "
+            "GitHub code-scanning / CI security dashboards). SARIF maps each "
+            "attack category to a rule and each finding to a result with a "
+            "GitHub-compatible security-severity; pair it with --fail-on to both "
+            "gate the build and upload alerts."
         ),
     )
     parser.add_argument(
