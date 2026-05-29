@@ -55,6 +55,7 @@ ouija \
 | `--response-path` | Dotted/bracket selector pinning where the reply text lives in the response JSON, e.g. `choices.0.message.content`. Use when the target returns a non-standard response shape — see below. |
 | `--mutators` | `surface` (default) or `all`. `all` adds encoding/obfuscation variants that probe representation-level guardrail bypasses — see below. |
 | `--inject-via` | `direct` (default), `document`, `webpage`, or `email`. Delivers the attack indirectly — nested inside data the endpoint processes — instead of as a direct prompt. See below. |
+| `--fail-on` | CI/CD gating. Exit `1` when at least one finding is at or above this severity: `info`, `low`, `medium`, `high`, `critical`, or `none` (default). `none` keeps the historical exit-`0`-on-completion behaviour. See [Exit codes & CI gating](#exit-codes--cicd-gating). |
 
 ouija sends each prompt as `{"prompt": "..."}` and reads the reply from common
 JSON fields (`reply`, `response`, `content`, OpenAI-style `choices[].message.content`, …).
@@ -85,7 +86,7 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
@@ -251,6 +252,43 @@ The attack — including any detection marker and any exfil canary — is preser
 keep working unchanged. This composes with every other flag: `--inject-via email`
 combined with `--attack-set exfil` reproduces the EchoLeak chain (indirect
 delivery + markdown-image data exfiltration).
+
+## Exit codes & CI/CD gating
+
+ouija is pipeline-friendly. Its process exit code lets a CI job, a cron-driven
+regression gate, or a `Makefile` decide whether the run *passed*:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Scan completed; no finding met the `--fail-on` threshold (or `--fail-on` is `none`, the default). |
+| `1` | Scan completed; at least one finding met the `--fail-on` threshold. |
+| `2` | Target is out of scope — refused before any request was sent. |
+| `3` | Usage or runtime error (bad `--request-template`/`--response-path`, transport failure, etc.). |
+
+By default (`--fail-on none`) ouija exits `0` whenever a scan *completes*, even
+if it found something — this preserves the historical behaviour and is right for
+interactive triage where you read the report yourself.
+
+For automation, pass `--fail-on <severity>` to break the build when a finding is
+at or above that severity. The report is still printed either way; only the exit
+code changes, so you can archive the artifact and gate the pipeline in one run:
+
+```bash
+# Fail the pipeline on any HIGH or CRITICAL finding, but still save the report.
+ouija \
+  --target https://api.example.com/v1/chat \
+  --scope-file scope.txt \
+  --attack-set all \
+  --format json \
+  --fail-on high \
+  | tee ouija-report.json
+# $? is 1 if a high/critical finding fired, 0 if the target held the line.
+```
+
+Severities are ordered `info < low < medium < high < critical`, so
+`--fail-on medium` trips on medium, high, *and* critical findings.
+Scope (`2`) and usage/runtime (`3`) errors always take precedence over the
+gate — a misconfigured run never masquerades as a clean pass.
 
 ## Scope-file format
 
