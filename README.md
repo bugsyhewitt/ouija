@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), `opsgenie` (an OpsGenie Alert API v2 create-alert payload — one aggregated alert per scan, `priority` mapped 1:1 from the top finding's severity (critical→P1 … info→P5), stable `alias` so reruns update the same alert, and a Close-Alert payload on a clean run to auto-close the prior alert; pipe into `https://api.opsgenie.com/v2/alerts` with an `Authorization: GenieKey <key>` header), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), [OpsGenie output](#opsgenie-output-format-opsgenie), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), `opsgenie` (an OpsGenie Alert API v2 create-alert payload — one aggregated alert per scan, `priority` mapped 1:1 from the top finding's severity (critical→P1 … info→P5), stable `alias` so reruns update the same alert, and a Close-Alert payload on a clean run to auto-close the prior alert; pipe into `https://api.opsgenie.com/v2/alerts` with an `Authorization: GenieKey <key>` header), `victorops` (a VictorOps / Splunk On-Call REST integration payload — one aggregated event per scan, `message_type` mapped from the top finding's severity (critical/high→CRITICAL, medium→WARNING, low/info→INFO), stable `entity_id` so reruns update the same incident, and a `message_type: RECOVERY` payload on a clean run to auto-recover the prior incident; pipe into `https://alert.victorops.com/integrations/generic/20131114/alert/<api-key>/<routing-key>`), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), [OpsGenie output](#opsgenie-output-format-opsgenie), [VictorOps output](#victorops-output-format-victorops), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -555,6 +555,92 @@ lightweight one-POST end-of-scan webhook digest (any HTTP receiver, not
 OpsGenie-specific), see [`--notify`](#webhook-notifications---notify);
 `--format opsgenie` is the OpsGenie-native on-call paging surface
 specifically.
+
+## VictorOps output (`--format victorops`)
+
+Where `--format pagerduty` targets PagerDuty's Events API v2 and
+`--format opsgenie` targets OpsGenie's Alert API v2, **`--format
+victorops`** is the VictorOps (now Splunk On-Call) on-call /
+incident-response surface: a
+[VictorOps REST integration](https://help.victorops.com/knowledge-base/rest-endpoint-integration-guide/)
+payload the operator pipes straight into the generic REST endpoint to
+page whoever owns the LLM endpoint. The payload is one *aggregated*
+event per scan (not one event per finding) — VictorOps' incident model
+is alert-per-symptom, not alert-per-detail, so a scan that turns up 12
+prompt-injection findings should page the on-call as ONE incident,
+with the per-finding breakdown carried under additional documented
+payload keys where the VictorOps incident timeline renders it as a
+structured detail block.
+
+Pipe it into the generic REST endpoint:
+
+```bash
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --format victorops > vo.json
+curl -X POST -H "Content-Type: application/json" --data @vo.json \
+     "https://alert.victorops.com/integrations/generic/20131114/alert/$VO_API_KEY/$VO_ROUTING_KEY"
+```
+
+Or POST in one shot from a CI step:
+
+```bash
+ouija ... --format victorops \
+  | curl -X POST -H "Content-Type: application/json" --data @- \
+         "https://alert.victorops.com/integrations/generic/20131114/alert/$VO_API_KEY/$VO_ROUTING_KEY"
+```
+
+Authentication uses the **integration URL path** — both the VictorOps
+API key and the routing key live in the URL, not the body. ouija
+deliberately does **not** read either key from the environment or the
+command line so neither key lands in the ouija command line, the scan
+artifact, or the log stream — supply both at curl time the same way
+other render-only formats are wired (`--format opsgenie` takes its
+GenieKey in an HTTP header; VictorOps takes both keys in the URL path,
+so — like OpsGenie — there is no body placeholder at all).
+
+What the payload contains:
+
+* On a run with one or more findings — a trigger payload with
+  `message_type` mapped from the top finding's severity (VictorOps'
+  alert scale is three-bucket — `CRITICAL`, `WARNING`, `INFO` — so the
+  five-bucket ouija scale collapses as `critical → CRITICAL`,
+  `high → CRITICAL`, `medium → WARNING`, `low → INFO`,
+  `info → INFO`), an at-a-glance `entity_display_name`, a long-form
+  `state_message` (target + attack-set + finding count + severity
+  breakdown), `state_start_time` as a Unix epoch-seconds integer (per
+  the VictorOps REST schema — not an ISO string, which would be
+  silently coerced or rejected), `monitoring_tool: "ouija v<version>"`,
+  and the per-finding structured detail under `ouija_findings` /
+  `ouija_severity_counts` / `ouija_top_finding` / `ouija_scan_id` /
+  `ouija_attack_set` / `ouija_patterns_sent` / `ouija_version` /
+  `ouija_findings_total` keys (VictorOps accepts arbitrary additional
+  keys and surfaces them in the incident timeline).
+* On a *clean* run (zero findings) — a `message_type: RECOVERY`
+  payload against the same stable `entity_id` an earlier trigger would
+  have used, so a rerun that finds nothing automatically closes the
+  previous VictorOps incident — the same "alert" / "no longer alert"
+  pairing `--format pagerduty` (`event_action: resolve`) and
+  `--format opsgenie` (Close-Alert) honour.
+* `entity_id` is derived from `target` + `attack-set` (NOT the per-run
+  random `scan_id`), so re-scanning the SAME target with the SAME
+  attack set updates the SAME incident instead of flooding the
+  on-call with a new incident on every rescan (same stable-key rule
+  as `--format pagerduty`'s `dedup_key` and `--format opsgenie`'s
+  `alias`).
+* Full prompts, response excerpts, and multi-turn transcripts are NOT
+  in the VictorOps payload — read `--format json` / `--format h1md`
+  for those; the VictorOps incident is the *page*, the JSON report is
+  the *evidence* (same rule as `--format pagerduty` / `--format
+  opsgenie` / `--format slack` / `--notify`).
+
+For the analogous PagerDuty and OpsGenie surfaces see
+[`--format pagerduty`](#pagerduty-output-format-pagerduty) and
+[`--format opsgenie`](#opsgenie-output-format-opsgenie); for the
+lightweight one-POST end-of-scan webhook digest (any HTTP receiver,
+not VictorOps-specific), see [`--notify`](#webhook-notifications---notify);
+`--format victorops` is the VictorOps / Splunk On-Call-native on-call
+paging surface specifically.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 
