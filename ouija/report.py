@@ -1198,6 +1198,317 @@ def to_pagerduty(result: ScanResult) -> str:
     return json.dumps(payload, indent=2)
 
 
+# ---------------------------------------------------------------------------
+# OpsGenie Alert API v2 payload (`--format opsgenie`)
+# ---------------------------------------------------------------------------
+# Reference: https://docs.opsgenie.com/docs/alert-api
+# Reference: https://docs.opsgenie.com/docs/alert-api#create-alert
+#
+# The Create-Alert endpoint (POST https://api.opsgenie.com/v2/alerts) accepts
+# a single JSON document. The required field is `message`; the rest are
+# optional. The schema we emit:
+#
+#   {
+#     "message":     "<= 130-char one-line alert title>",
+#     "alias":       "<<= 512-char stable dedup key; OpenAPI 'client-defined
+#                       identifier' — OpsGenie collapses alerts sharing this
+#                       alias into a single open alert and pairs a Close-Alert
+#                       call against the same alias to close it>",
+#     "description": "<= 15000-char long-form detail block>",
+#     "priority":    "P1" | "P2" | "P3" | "P4" | "P5",
+#     "source":      "<the affected component / URL>",
+#     "entity":      "<the entity the alert is about — target URL>",
+#     "tags":        ["<short triage tags>", ...],
+#     "details":     { ... arbitrary string→string map; renders in the alert
+#                       detail pane as a structured key/value table ... },
+#     "note":        "<optional creator's note attached to the alert>"
+#   }
+#
+# Authentication is via an `Authorization: GenieKey <api-key>` HTTP HEADER,
+# NOT a body field — so unlike the PagerDuty payload there is no in-body
+# routing-key placeholder. The operator supplies the GenieKey at curl time
+# (`-H "Authorization: GenieKey $OPSGENIE_API_KEY"`), keeping the key off the
+# ouija command line and out of the scan artifact — the same "ouija renders,
+# you pipe" boundary every other format honours.
+#
+# Priority must be one of P1..P5; OpsGenie's five-bucket priority scale maps
+# 1:1 to ouija's five-bucket severity scale:
+#
+#   ouija       → OpsGenie
+#   critical    → P1
+#   high        → P2
+#   medium      → P3
+#   low         → P4
+#   info        → P5
+#
+# OpsGenie's `details` map is documented as string→string, so every value is
+# coerced to a string before insertion (counts/booleans become their str()
+# form) — emitting a nested object or a raw int there would be silently
+# dropped or rejected by some accounts.
+#
+# A clean run (zero findings) emits a deliberately-minimal "close" payload
+# carrying ONLY `alias` + `note`, the documented shape the OpsGenie
+# Close-Alert endpoint (POST /v2/alerts/{identifier}/close?identifierType=alias)
+# accepts — so a rerun that finds nothing automatically closes the previous
+# OpsGenie alert, the same "alert" / "no longer alert" pairing the PagerDuty
+# format honours. Because Create-Alert and Close-Alert are DIFFERENT
+# endpoints, the README documents the two-endpoint curl pattern keyed off
+# whether `message` is present in the emitted JSON.
+
+# Ouija severity -> OpsGenie priority. OpsGenie accepts only P1..P5; anything
+# else is rejected at create time with HTTP 422. Map ouija's five-bucket
+# scale 1:1 (the scales are co-extensive).
+_OPSGENIE_PRIORITY: dict[Severity, str] = {
+    Severity.CRITICAL: "P1",
+    Severity.HIGH: "P2",
+    Severity.MEDIUM: "P3",
+    Severity.LOW: "P4",
+    Severity.INFO: "P5",
+}
+
+# OpsGenie `message` field is hard-capped at 130 characters; alerts whose
+# message exceeds the cap are rejected. We render an at-a-glance one-line
+# message so the cap is comfortable on real scans, but truncate defensively
+# against very long target URLs or very large finding counts.
+_OPSGENIE_MESSAGE_CAP = 130
+
+# OpsGenie `alias` field is hard-capped at 512 characters; the dedup behaviour
+# relies on the alias matching exactly across reruns, so the alias must fit
+# within the cap deterministically rather than be silently truncated by the
+# server.
+_OPSGENIE_ALIAS_CAP = 512
+
+# OpsGenie `description` field is hard-capped at 15000 characters. We render
+# a compact human-readable description (not the full evidence) so the cap is
+# comfortable, matching the PagerDuty rule: this payload is the *alert*, the
+# JSON report is the *evidence*.
+_OPSGENIE_DESCRIPTION_CAP = 15000
+
+
+def _opsgenie_alias(result: ScanResult) -> str:
+    """Stable alias derived from target + attack-set.
+
+    OpsGenie collapses alerts sharing an ``alias`` into a single open alert
+    and pairs a Close-Alert call against the same alias to close it. We want
+    re-scanning the SAME target with the SAME attack set to update the SAME
+    alert (so a triager isn't deluged with one new alert per rescan), and a
+    later clean run to close it. Using ``scan_id`` would defeat that — every
+    scan has a fresh random ``scan_id`` — so we key on the stable scan inputs
+    instead: target URL + attack set. Same rule as the PagerDuty dedup_key.
+    """
+    alias = f"ouija::{result.target}::{result.attack_set}"
+    if len(alias) > _OPSGENIE_ALIAS_CAP:
+        alias = alias[:_OPSGENIE_ALIAS_CAP]
+    return alias
+
+
+def to_opsgenie(result: ScanResult) -> str:
+    """Render the scan as an OpsGenie Alert API v2 create-alert payload.
+
+    Where ``--format pagerduty`` targets PagerDuty's Events API v2 and
+    ``--format slack`` is the chat-channel alert, ``--format opsgenie`` is
+    the OpsGenie on-call / incident-response surface: a Create-Alert-shaped
+    JSON document the operator pipes straight into
+    ``https://api.opsgenie.com/v2/alerts`` (with an
+    ``Authorization: GenieKey <key>`` header) to page whoever owns the LLM
+    endpoint. The payload is one *aggregated* alert per scan (not one alert
+    per finding) — OpsGenie's alert model is alert-per-symptom, not
+    alert-per-detail, matching the PagerDuty rule: a single ouija scan that
+    turns up 12 prompt-injection findings should page the on-call as ONE
+    alert ("ouija found 12 LLM-security issues on
+    https://api.example.com/v1/chat"), with the per-finding breakdown
+    carried under ``details`` where the OpsGenie alert-detail UI renders it
+    as a structured key/value table.
+
+    Usage:
+
+    .. code-block:: bash
+
+        ouija --target https://api.example.com/v1/chat --scope-file scope.txt \\
+              --format opsgenie > og.json
+        curl -X POST -H "Content-Type: application/json" \\
+             -H "Authorization: GenieKey $OPSGENIE_API_KEY" \\
+             --data @og.json https://api.opsgenie.com/v2/alerts
+
+    Behaviour:
+
+    * A run with one or more findings emits a Create-Alert payload whose
+      ``priority`` is mapped from the *highest* finding severity in the run
+      (ouija ``critical`` → ``P1``, ``high`` → ``P2``, ``medium`` → ``P3``,
+      ``low`` → ``P4``, ``info`` → ``P5``).
+    * A *clean* run (zero findings) emits a deliberately-minimal Close-Alert
+      payload (``alias`` + ``note`` only) so a rerun that finds nothing
+      automatically closes the previous OpsGenie alert — the same "alert" /
+      "no longer alert" pairing the PagerDuty format honours. The operator
+      POSTs the close payload to
+      ``https://api.opsgenie.com/v2/alerts/{alias}/close?identifierType=alias``
+      (see README).
+    * ``alias`` is derived from target + attack-set (NOT the per-run random
+      ``scan_id``) so re-scanning the SAME target with the SAME attack set
+      updates the SAME alert instead of flooding the on-call with a new
+      alert per rescan. Same stable-key rule as ``--format pagerduty``.
+    * The OpsGenie GenieKey is supplied via the
+      ``Authorization: GenieKey <key>`` HTTP header at curl time — NOT a
+      body field — so unlike ``--format pagerduty`` there is no in-body
+      routing-key placeholder. ouija deliberately does NOT read the GenieKey
+      from the environment or the command line so the key never lands in
+      the ouija command line, the scan artifact, or the log stream
+      (preserving the same "ouija renders, you pipe" boundary every other
+      format honours).
+
+    [Worker decision (Phase 2 / R34): chose ``--format opsgenie`` (OpsGenie
+    Alert API v2 create-alert payload) over ``--format jira`` (Jira REST
+    issue-create payload). Both were unshipped post-v0.1 directions and both
+    extend the same "render-only, you pipe" pattern every prior format
+    follows. OpsGenie's Create-Alert endpoint has a single fixed payload
+    schema (``message`` + optional ``alias`` / ``description`` / ``priority``
+    / ``source`` / ``tags`` / ``details``) accepted by every OpsGenie account
+    with no per-tenant variation, so the payload ouija emits works against
+    any account by supplying the GenieKey at curl time. Jira's
+    issue-create payload, by contrast, requires the caller to know the
+    target tenant's project key, issue type, and any required custom fields
+    — values ouija cannot know at scan time — so a Jira format would either
+    need an additional ``--jira-project-key`` / ``--jira-issue-type`` flag
+    surface OR emit a placeholder that fails against most real Jira
+    instances. The R33 worker reached the same conclusion when choosing
+    PagerDuty over Jira; that assessment still holds at R34. OpsGenie's
+    single-payload-fits-all-tenants shape is the more tractable, more
+    deterministic deliverable. It also closes a real operational gap:
+    PagerDuty and OpsGenie are the two dominant incident-management
+    platforms, and a shop that standardised on OpsGenie (Atlassian-aligned)
+    cannot use ``--format pagerduty``. Same shape as ``to_pagerduty`` /
+    ``to_slack`` (pure stdlib JSON shaping over the final
+    :class:`~ouija.models.ScanResult` — touches no scanner state, no
+    architecture).]
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+    alias = _opsgenie_alias(result)
+
+    # Clean run — emit a Close-Alert payload against the stable alias so a
+    # prior create against the same target+attack-set is auto-closed. The
+    # OpsGenie Close-Alert endpoint accepts only `note` + `user` + `source`
+    # in the body (the alias is in the URL); we emit `alias` here too so the
+    # operator can substitute it into the URL with a single `jq -r .alias`
+    # without re-deriving it.
+    if not findings:
+        close_payload: dict[str, Any] = {
+            "alias": alias,
+            "note": (
+                f"ouija rerun against {result.target} ({result.attack_set}) "
+                f"found 0 findings — auto-closing the prior alert."
+            ),
+            "source": f"ouija v{result.version}",
+        }
+        return json.dumps(close_payload, indent=2)
+
+    top = findings[0]
+    priority = _OPSGENIE_PRIORITY.get(top.severity, "P5")
+
+    # One-line message — what lands in the on-call's phone notification.
+    # Cap defensively against the 130-char OpsGenie limit.
+    message = (
+        f"ouija: {len(findings)} finding(s) on {result.target} "
+        f"[top: {top.severity.value}]"
+    )
+    if len(message) > _OPSGENIE_MESSAGE_CAP:
+        message = message[: _OPSGENIE_MESSAGE_CAP - 1] + "…"
+
+    # Severity-bucket counts so the alert detail surfaces the breakdown
+    # without the on-call having to count rows.
+    severity_counts: dict[str, int] = {}
+    for f in findings:
+        key = f.severity.value
+        severity_counts[key] = severity_counts.get(key, 0) + 1
+
+    # Long-form description — a human-readable digest the on-call reads in
+    # the alert detail pane. Stays under the 15000-char cap by limiting to
+    # the top-finding summary + counts (the full per-finding breakdown is
+    # in `details.findings` as structured JSON, and the full evidence stays
+    # in `--format json`).
+    description_lines = [
+        f"ouija scan of {result.target} (attack set: {result.attack_set}) "
+        f"returned {len(findings)} finding(s) across {result.patterns_sent} "
+        f"attack request(s).",
+        "",
+        f"Top finding: [{top.severity.value.upper()}] {top.title} "
+        f"(category: {top.category}, OWASP: {top.owasp}, id: {top.id})",
+        "",
+        "Severity breakdown: "
+        + ", ".join(f"{k}={v}" for k, v in severity_counts.items()),
+        "",
+        "Full evidence (prompts, response excerpts, multi-turn transcripts) "
+        "is in the --format json report — this alert is the page, the JSON "
+        "report is the evidence.",
+    ]
+    description = "\n".join(description_lines)
+    if len(description) > _OPSGENIE_DESCRIPTION_CAP:
+        description = description[: _OPSGENIE_DESCRIPTION_CAP - 1] + "…"
+
+    # Per-finding compact records under details.findings. JSON-encoded into
+    # a string because OpsGenie's `details` map is string→string. Keep each
+    # record small enough that a heavy scan (dozens of findings) still
+    # produces a payload OpsGenie will accept.
+    finding_records = [
+        {
+            "id": f.id,
+            "severity": f.severity.value,
+            "title": f.title,
+            "category": f.category,
+            "owasp": f.owasp,
+            "pattern_id": f.pattern_id,
+            "technique": f.technique,
+            "confidence": round(f.confidence, 3),
+        }
+        for f in findings
+    ]
+
+    # `details` is a string→string map per the OpsGenie schema. Coerce every
+    # value to its str() form; nested structures are JSON-encoded into a
+    # single string so they survive the wire format.
+    details: dict[str, str] = {
+        "tool": result.tool,
+        "ouija_version": result.version,
+        "scan_id": result.scan_id,
+        "attack_set": result.attack_set,
+        "patterns_sent": str(result.patterns_sent),
+        "findings_total": str(len(findings)),
+        "severity_counts": json.dumps(severity_counts),
+        "top_finding_id": top.id,
+        "top_finding_owasp": top.owasp,
+        "findings": json.dumps(finding_records),
+    }
+
+    # Tags surface as coloured pills in the OpsGenie alert list — useful for
+    # triage filtering. Keep the set small and stable: tool name, attack set,
+    # top severity, and each distinct OWASP category present (deduplicated,
+    # sorted for determinism).
+    owasp_tags = sorted({f.owasp for f in findings})
+    tags = [
+        "ouija",
+        f"attack-set:{result.attack_set}",
+        f"top-severity:{top.severity.value}",
+        *owasp_tags,
+    ]
+
+    payload: dict[str, Any] = {
+        "message": message,
+        "alias": alias,
+        "description": description,
+        "priority": priority,
+        "source": f"ouija v{result.version}",
+        "entity": result.target,
+        "tags": tags,
+        "details": details,
+        "note": (
+            f"Generated by ouija v{result.version} · scan {result.scan_id} "
+            f"· {result.timestamp}"
+        ),
+    }
+    return json.dumps(payload, indent=2)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -1215,6 +1526,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_slack(result)
     if fmt == "pagerduty":
         return to_pagerduty(result)
+    if fmt == "opsgenie":
+        return to_opsgenie(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif
