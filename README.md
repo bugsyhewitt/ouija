@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -379,6 +379,88 @@ For the lightweight chat-bot alert (one POST with a compact JSON summary, no
 Block Kit rendering, fired automatically at the end of the scan), see
 [`--notify`](#webhook-notifications---notify) instead. `--format slack` is
 the *rendered Block Kit payload*; `--notify` is the *side-channel alert*.
+
+## PagerDuty output (`--format pagerduty`)
+
+Where `--format slack` is the chat-channel alert and `--format sarif` is the
+CI / code-scanning artifact, **`--format pagerduty`** is the on-call /
+incident-response surface: a [PagerDuty Events API v2](https://developer.pagerduty.com/docs/3d063fd4814a6-events-api-v2-overview)
+enqueue payload the operator pipes straight into
+`https://events.pagerduty.com/v2/enqueue` to page whoever owns the LLM
+endpoint. The payload is one *aggregated* event per scan (not one event per
+finding) — PagerDuty's incident model is alert-per-symptom, not
+alert-per-detail, so a scan that turns up 12 prompt-injection findings should
+page the on-call as ONE incident, with the per-finding breakdown carried
+under `payload.custom_details` where the incident-detail UI renders it as
+structured JSON.
+
+Pipe it into the Events API v2 endpoint:
+
+```bash
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --format pagerduty > pd.json
+# substitute your Events-API-v2 integration key once:
+sed -i 's/YOUR_PAGERDUTY_ROUTING_KEY/'"$PD_ROUTING_KEY"'/' pd.json
+curl -X POST -H 'Content-Type: application/json' \
+     --data @pd.json https://events.pagerduty.com/v2/enqueue
+```
+
+Or substitute and POST in one shot from a CI step:
+
+```bash
+ouija ... --format pagerduty \
+  | sed 's/YOUR_PAGERDUTY_ROUTING_KEY/'"$PD_ROUTING_KEY"'/' \
+  | curl -X POST -H 'Content-Type: application/json' --data @- \
+         https://events.pagerduty.com/v2/enqueue
+```
+
+`routing_key` is emitted as the literal placeholder
+`YOUR_PAGERDUTY_ROUTING_KEY`; ouija deliberately does **not** read the
+integration key from the environment or the command line so the key never
+lands in the ouija command line, the scan artifact, or the log stream —
+substitute it at pipe-time the same way other render-only formats are wired
+(`--format slack` does not POST to Slack, `--format sarif` does not upload
+to code-scanning).
+
+What the event contains:
+
+* `event_action: trigger` on a run with one or more findings,
+  `event_action: resolve` on a *clean* run — a rerun that finds nothing
+  automatically closes the previous PagerDuty incident, the same "alert" /
+  "no longer alert" pairing PagerDuty's own integrations (Datadog,
+  Prometheus Alertmanager, Nagios) follow.
+* `dedup_key` derived from `target` + `attack-set` (NOT the per-run random
+  `scan_id`), so re-scanning the SAME target with the SAME attack set
+  updates the SAME incident instead of flooding the on-call with a new
+  incident on every rescan.
+* `payload.severity` is one of the four PagerDuty-accepted strings — the
+  five-bucket ouija scale maps as: `critical → critical`, `high → error`,
+  `medium → warning`, `low → info`, `info → info` (PagerDuty has no
+  "high" / "medium" / "low"; the closest accepted strings are used).
+* `payload.summary` is a one-line at-a-glance description, capped at
+  PagerDuty's 1024-char limit.
+* `payload.source` is the target URL; `payload.component` is
+  `llm-endpoint`; `payload.group` is the attack set; `payload.class` is
+  `llm-security-finding`.
+* `payload.custom_details` carries the structured breakdown: tool / version
+  / scan ID / attack set / total findings / severity-bucket counts / top
+  finding pointer / per-finding records (id, severity, title, category,
+  OWASP, pattern ID, technique, confidence — severity-sorted, critical
+  first, same order every other format honours). Full prompts, response
+  excerpts, and multi-turn transcripts are NOT in the PagerDuty payload —
+  read `--format json` / `--format h1md` for those; the PagerDuty event
+  is the *page*, the JSON report is the *evidence* (same rule as
+  `--format slack` / `--notify`).
+* `client: "ouija v<version>"` surfaces in the incident header as
+  "Reported by", so the incident is self-describing without the triager
+  having to open `custom_details` first.
+
+For the lightweight one-POST end-of-scan webhook digest (any HTTP receiver,
+not PagerDuty-specific), see [`--notify`](#webhook-notifications---notify);
+for the *rendered* Slack Block Kit payload see
+[`--format slack`](#slack-output-format-slack); `--format pagerduty` is the
+on-call paging surface specifically.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 

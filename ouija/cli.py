@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -102,7 +102,18 @@ def build_parser() -> argparse.ArgumentParser:
             "section block per finding, wrapped in a severity-coloured "
             "attachment; pipe it directly into a Slack incoming webhook "
             "via `curl --data @-`, since Slack's 'mrkdwn' dialect does NOT "
-            "render the GFM tables 'markdown-table' produces), or 'sarif' "
+            "render the GFM tables 'markdown-table' produces), 'pagerduty' "
+            "(a PagerDuty Events API v2 enqueue payload — single aggregated "
+            "event whose `payload.severity` is mapped from the top finding's "
+            "severity, with per-finding details under `payload.custom_details` "
+            "and a stable `dedup_key` derived from the scan's target+attack-set "
+            "so re-scanning the same target updates the same incident; "
+            "`routing_key` is emitted as the literal placeholder string "
+            "`YOUR_PAGERDUTY_ROUTING_KEY` for the operator to substitute "
+            "before POSTing to https://events.pagerduty.com/v2/enqueue, or "
+            "the scan is suppressed entirely on a zero-finding run "
+            "(`event_action: resolve` against the same dedup_key) so a clean "
+            "rerun closes the prior incident automatically), or 'sarif' "
             "(SARIF 2.1.0 for GitHub code-scanning / CI security dashboards). "
             "SARIF maps each attack category to a rule and each finding to a "
             "result with a GitHub-compatible security-severity; pair it with "
