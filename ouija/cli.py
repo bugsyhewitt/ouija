@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -113,7 +113,17 @@ def build_parser() -> argparse.ArgumentParser:
             "before POSTing to https://events.pagerduty.com/v2/enqueue, or "
             "the scan is suppressed entirely on a zero-finding run "
             "(`event_action: resolve` against the same dedup_key) so a clean "
-            "rerun closes the prior incident automatically), or 'sarif' "
+            "rerun closes the prior incident automatically), 'opsgenie' "
+            "(an OpsGenie Alert API v2 create-alert payload — single "
+            "aggregated alert per scan whose `priority` is mapped 1:1 from "
+            "the top finding's severity (critical→P1 … info→P5), with "
+            "per-finding records under `details.findings` and a stable "
+            "`alias` derived from target+attack-set so re-scanning the same "
+            "target updates the same alert; the GenieKey is supplied via "
+            "the `Authorization: GenieKey <key>` HTTP HEADER at curl time "
+            "(NOT a body field, unlike `pagerduty`), and a zero-finding run "
+            "emits a Close-Alert payload against the same alias so a clean "
+            "rerun closes the prior alert automatically), or 'sarif' "
             "(SARIF 2.1.0 for GitHub code-scanning / CI security dashboards). "
             "SARIF maps each attack category to a rule and each finding to a "
             "result with a GitHub-compatible security-severity; pair it with "

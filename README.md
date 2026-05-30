@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), `opsgenie` (an OpsGenie Alert API v2 create-alert payload — one aggregated alert per scan, `priority` mapped 1:1 from the top finding's severity (critical→P1 … info→P5), stable `alias` so reruns update the same alert, and a Close-Alert payload on a clean run to auto-close the prior alert; pipe into `https://api.opsgenie.com/v2/alerts` with an `Authorization: GenieKey <key>` header), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), [OpsGenie output](#opsgenie-output-format-opsgenie), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -461,6 +461,100 @@ not PagerDuty-specific), see [`--notify`](#webhook-notifications---notify);
 for the *rendered* Slack Block Kit payload see
 [`--format slack`](#slack-output-format-slack); `--format pagerduty` is the
 on-call paging surface specifically.
+
+## OpsGenie output (`--format opsgenie`)
+
+Where `--format pagerduty` targets PagerDuty's Events API v2 and
+`--format slack` is the chat-channel alert, **`--format opsgenie`** is the
+OpsGenie on-call / incident-response surface: an
+[OpsGenie Alert API v2](https://docs.opsgenie.com/docs/alert-api) Create-Alert
+payload the operator pipes straight into `https://api.opsgenie.com/v2/alerts`
+(with an `Authorization: GenieKey <key>` header) to page whoever owns the LLM
+endpoint. The payload is one *aggregated* alert per scan (not one alert per
+finding) — OpsGenie's alert model is alert-per-symptom, not alert-per-detail,
+so a scan that turns up 12 prompt-injection findings should page the on-call
+as ONE alert, with the per-finding breakdown carried under `details` where
+the alert-detail UI renders it as a structured key/value table.
+
+Pipe it into the Create-Alert endpoint:
+
+```bash
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --format opsgenie > og.json
+curl -X POST -H "Content-Type: application/json" \
+     -H "Authorization: GenieKey $OPSGENIE_API_KEY" \
+     --data @og.json https://api.opsgenie.com/v2/alerts
+```
+
+Or POST in one shot from a CI step:
+
+```bash
+ouija ... --format opsgenie \
+  | curl -X POST -H "Content-Type: application/json" \
+         -H "Authorization: GenieKey $OPSGENIE_API_KEY" \
+         --data @- https://api.opsgenie.com/v2/alerts
+```
+
+Authentication uses the `Authorization: GenieKey <key>` HTTP **header** — the
+GenieKey is **never** in the body. ouija deliberately does **not** read the
+GenieKey from the environment or the command line so the key never lands in
+the ouija command line, the scan artifact, or the log stream — supply it at
+curl time the same way other render-only formats are wired (`--format
+pagerduty` emits a `routing_key` placeholder for body substitution; OpsGenie
+takes the key as a header, so there is no body placeholder at all).
+
+What the alert contains:
+
+* On a run with one or more findings — a Create-Alert payload with
+  `message` (the at-a-glance one-line title, capped at OpsGenie's 130-char
+  limit), `priority` mapped 1:1 from the top finding's severity (the
+  five-bucket ouija scale maps to OpsGenie's five-bucket priority scale as
+  `critical → P1`, `high → P2`, `medium → P3`, `low → P4`, `info → P5`),
+  a long-form `description` (capped at 15000 chars), `source: "ouija
+  v<version>"`, `entity: <target URL>`, and triage `tags`
+  (`ouija`, `attack-set:<set>`, `top-severity:<sev>`, plus each distinct
+  OWASP category present).
+* On a *clean* run (zero findings) — a deliberately-minimal Close-Alert
+  payload carrying ONLY `alias` + `note` + `source`, the documented shape
+  the OpsGenie Close-Alert endpoint accepts. POST it to the close URL
+  keyed by alias:
+
+  ```bash
+  ALIAS=$(jq -r .alias og.json)
+  curl -X POST -H "Content-Type: application/json" \
+       -H "Authorization: GenieKey $OPSGENIE_API_KEY" \
+       --data @og.json \
+       "https://api.opsgenie.com/v2/alerts/$ALIAS/close?identifierType=alias"
+  ```
+
+  A rerun that finds nothing automatically closes the previous OpsGenie
+  alert — the same "alert" / "no longer alert" pairing `--format pagerduty`
+  honours.
+* `alias` is derived from `target` + `attack-set` (NOT the per-run random
+  `scan_id`), so re-scanning the SAME target with the SAME attack set
+  updates the SAME alert instead of flooding the on-call with a new alert
+  on every rescan (same stable-key rule as `--format pagerduty`'s
+  `dedup_key`).
+* `details` carries the structured breakdown as a string→string map (per
+  the OpsGenie schema — every value must be a string, so nested structures
+  like `severity_counts` and the per-finding records are JSON-encoded into
+  string values). Keys: `tool`, `ouija_version`, `scan_id`, `attack_set`,
+  `patterns_sent`, `findings_total`, `severity_counts`, `top_finding_id`,
+  `top_finding_owasp`, `findings` (severity-sorted, critical first, same
+  order every other format honours; each record carries id, severity,
+  title, category, OWASP, pattern ID, technique, confidence). Full
+  prompts, response excerpts, and multi-turn transcripts are NOT in the
+  OpsGenie payload — read `--format json` / `--format h1md` for those;
+  the OpsGenie alert is the *page*, the JSON report is the *evidence*
+  (same rule as `--format pagerduty` / `--format slack` / `--notify`).
+
+For the analogous PagerDuty surface see
+[`--format pagerduty`](#pagerduty-output-format-pagerduty); for the
+lightweight one-POST end-of-scan webhook digest (any HTTP receiver, not
+OpsGenie-specific), see [`--notify`](#webhook-notifications---notify);
+`--format opsgenie` is the OpsGenie-native on-call paging surface
+specifically.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 
