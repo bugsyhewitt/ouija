@@ -1509,6 +1509,295 @@ def to_opsgenie(result: ScanResult) -> str:
     return json.dumps(payload, indent=2)
 
 
+# ---------------------------------------------------------------------------
+# VictorOps / Splunk On-Call REST integration payload (`--format victorops`)
+# ---------------------------------------------------------------------------
+# Reference: https://help.victorops.com/knowledge-base/rest-endpoint-integration-guide/
+#
+# The REST integration endpoint
+# (POST https://alert.victorops.com/integrations/generic/20131114/alert/<api-key>/<routing-key>)
+# accepts a single JSON document. Both the API key and the routing key
+# travel in the URL path — NOT in the body — so unlike the PagerDuty
+# payload there is no in-body routing-key placeholder (same boundary as
+# OpsGenie, which carries its GenieKey in the Authorization header). The
+# documented schema we emit:
+#
+#   {
+#     "message_type":         "CRITICAL" | "WARNING" | "INFO"
+#                              | "ACKNOWLEDGEMENT" | "RECOVERY",
+#     "entity_id":            "<stable client-defined identifier — VictorOps
+#                              collapses events sharing this entity_id into
+#                              a single incident, and a RECOVERY message
+#                              against the same entity_id closes it>",
+#     "entity_display_name":  "<short at-a-glance incident title>",
+#     "state_message":        "<long-form digest the on-call reads in the
+#                              incident detail pane>",
+#     "state_start_time":     <epoch seconds — int, NOT ISO string>,
+#     "monitoring_tool":      "<the reporter — surfaces as 'Monitoring Tool'>",
+#     "<additional keys>":     ... arbitrary additional JSON-serialisable
+#                              values surface in the VictorOps incident
+#                              timeline as a structured detail block ...
+#   }
+#
+# message_type must be one of the five strings above; anything else is
+# silently dropped by the REST endpoint. VictorOps' alert scale is
+# three-bucket (CRITICAL / WARNING / INFO), so ouija's five-bucket
+# severity scale collapses as:
+#
+#   ouija       → VictorOps
+#   critical    → CRITICAL
+#   high        → CRITICAL
+#   medium      → WARNING
+#   low         → INFO
+#   info        → INFO
+#
+# A clean run (zero findings) emits a RECOVERY message against the same
+# entity_id the prior trigger would have used, so a rerun that finds
+# nothing automatically closes the previous VictorOps incident — the
+# same "alert" / "no longer alert" pairing the PagerDuty `resolve` /
+# OpsGenie Close-Alert rules honour.
+
+# Ouija severity -> VictorOps message_type. VictorOps accepts only the
+# five strings below; anything else is silently dropped. The alert scale
+# is three-bucket (CRITICAL/WARNING/INFO), so the high-severity ouija
+# buckets collapse into CRITICAL and the low-severity ones into INFO.
+_VICTOROPS_MESSAGE_TYPE: dict[Severity, str] = {
+    Severity.CRITICAL: "CRITICAL",
+    Severity.HIGH: "CRITICAL",
+    Severity.MEDIUM: "WARNING",
+    Severity.LOW: "INFO",
+    Severity.INFO: "INFO",
+}
+
+
+def _victorops_entity_id(result: ScanResult) -> str:
+    """Stable entity_id derived from target + attack-set.
+
+    VictorOps collapses events sharing an ``entity_id`` into a single
+    incident and pairs a RECOVERY message against the same entity_id to
+    close it. We want re-scanning the SAME target with the SAME attack
+    set to update the SAME incident (so a triager isn't deluged with one
+    new incident per rescan), and a later clean run to recover it. Using
+    ``scan_id`` would defeat that — every scan has a fresh random
+    ``scan_id`` — so we key on the stable scan inputs instead: target
+    URL + attack set. Same stable-key rule as the PagerDuty dedup_key
+    and the OpsGenie alias.
+    """
+    return f"ouija::{result.target}::{result.attack_set}"
+
+
+def _victorops_epoch(iso_timestamp: str) -> int:
+    """Convert an ISO-8601 ScanResult.timestamp to epoch seconds.
+
+    VictorOps documents ``state_start_time`` as a Unix epoch-seconds
+    integer; emitting an ISO string or a millisecond timestamp there is
+    silently coerced or rejected. Falls back to 0 if the timestamp can
+    not be parsed (defensive — should never happen because
+    ScanResult.timestamp is produced by _utc_now_iso, but a parse
+    failure here must not break the whole render).
+    """
+    from datetime import datetime
+
+    try:
+        # ScanResult timestamps from _utc_now_iso() carry a UTC offset.
+        # datetime.fromisoformat handles both ``+00:00`` and ``Z`` suffix
+        # forms on modern Python (3.11+); fall back to stripping a
+        # trailing Z for older interpreter compatibility.
+        ts = iso_timestamp
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        return int(datetime.fromisoformat(ts).timestamp())
+    except (ValueError, TypeError):
+        return 0
+
+
+def to_victorops(result: ScanResult) -> str:
+    """Render the scan as a VictorOps / Splunk On-Call REST payload.
+
+    Where ``--format pagerduty`` targets PagerDuty's Events API v2 and
+    ``--format opsgenie`` targets OpsGenie's Alert API v2,
+    ``--format victorops`` is the VictorOps (Splunk On-Call) on-call /
+    incident-response surface: a REST-integration-shaped JSON document
+    the operator pipes straight into the VictorOps generic REST
+    endpoint to page whoever owns the LLM endpoint. The payload is one
+    *aggregated* event per scan (not one event per finding) — VictorOps'
+    incident model is alert-per-symptom, not alert-per-detail, matching
+    the PagerDuty / OpsGenie rule: a single ouija scan that turns up 12
+    prompt-injection findings should page the on-call as ONE incident
+    ("ouija found 12 LLM-security issues on
+    https://api.example.com/v1/chat"), with the per-finding breakdown
+    carried under additional documented payload keys where the
+    VictorOps incident timeline renders it as a structured detail
+    block.
+
+    Usage:
+
+    .. code-block:: bash
+
+        ouija --target https://api.example.com/v1/chat --scope-file scope.txt \\
+              --format victorops > vo.json
+        curl -X POST -H "Content-Type: application/json" --data @vo.json \\
+             "https://alert.victorops.com/integrations/generic/20131114/alert/$VO_API_KEY/$VO_ROUTING_KEY"
+
+    Behaviour:
+
+    * A run with one or more findings emits a trigger payload whose
+      ``message_type`` is mapped from the *highest* finding severity in
+      the run (ouija ``critical`` / ``high`` → ``CRITICAL``, ``medium``
+      → ``WARNING``, ``low`` / ``info`` → ``INFO`` — VictorOps' alert
+      scale is three-bucket, so the five-bucket ouija scale collapses).
+    * A *clean* run (zero findings) emits a ``message_type: RECOVERY``
+      payload against the same stable ``entity_id`` a prior trigger
+      would have used, so a rerun that finds nothing automatically
+      closes the previous VictorOps incident — the same "alert" / "no
+      longer alert" pairing PagerDuty's ``event_action: resolve`` and
+      OpsGenie's Close-Alert honour.
+    * ``entity_id`` is derived from target + attack-set (NOT the
+      per-run random ``scan_id``) so re-scanning the SAME target with
+      the SAME attack set updates the SAME incident instead of flooding
+      the on-call with a new incident per rescan. Same stable-key rule
+      as ``--format pagerduty`` (``dedup_key``) and ``--format
+      opsgenie`` (``alias``).
+    * Both the VictorOps API key and the routing key travel in the
+      integration URL path at curl time — NOT in the body — so ouija
+      deliberately does NOT read either key from the environment or
+      the command line, and emits NO body placeholder for either. The
+      keys never land in the ouija command line, the scan artifact, or
+      the log stream (same "ouija renders, you pipe" boundary every
+      other format honours; the same in-URL-not-in-body rule
+      ``--format opsgenie`` follows for its Authorization header).
+    * ``state_start_time`` is emitted as epoch seconds (an integer
+      Unix timestamp) per the VictorOps REST schema — not an ISO
+      string, which would be silently coerced or rejected.
+
+    [Worker decision (Phase 2 / R35): chose ``--format victorops``
+    (VictorOps / Splunk On-Call REST integration payload) over
+    ``--format jira`` (Jira REST issue-create payload). Both were
+    unshipped post-v0.1 directions and both extend the same
+    "render-only, you pipe" pattern every prior format follows.
+    VictorOps' generic REST integration has a single fixed payload
+    schema (``message_type`` + ``entity_id`` + ``entity_display_name``
+    + ``state_message`` + ``state_start_time`` + ``monitoring_tool``)
+    accepted by every VictorOps / Splunk On-Call account with no
+    per-tenant variation, so the payload ouija emits works against any
+    account by supplying the API key + routing key in the integration
+    URL at curl time. Jira's issue-create payload, by contrast,
+    requires the caller to know the target tenant's project key, issue
+    type, and any required custom fields — values ouija cannot know at
+    scan time — so a Jira format would either need an additional
+    ``--jira-project-key`` / ``--jira-issue-type`` flag surface OR
+    emit a placeholder that fails against most real Jira instances.
+    The R33 and R34 workers reached the same conclusion when choosing
+    PagerDuty and OpsGenie over Jira; that assessment still holds at
+    R35. VictorOps' single-payload-fits-all-tenants shape is the more
+    tractable, more deterministic deliverable. It also closes a real
+    operational gap: ouija now covers the three dominant
+    incident-management platforms (PagerDuty, OpsGenie, and VictorOps /
+    Splunk On-Call), so a shop that standardised on any of the three
+    can wire ouija into its on-call rotation without rolling their own
+    payload-shaping shim. Same shape as ``to_pagerduty`` /
+    ``to_opsgenie`` / ``to_slack`` (pure stdlib JSON shaping over the
+    final :class:`~ouija.models.ScanResult` — touches no scanner state,
+    no architecture).]
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+    entity_id = _victorops_entity_id(result)
+    start_time = _victorops_epoch(result.timestamp)
+    monitoring_tool = f"ouija v{result.version}"
+
+    if not findings:
+        recovery_payload: dict[str, Any] = {
+            "message_type": "RECOVERY",
+            "entity_id": entity_id,
+            "entity_display_name": (
+                f"ouija: clean rerun on {result.target} "
+                f"({result.attack_set}) — auto-recovering prior incident"
+            ),
+            "state_message": (
+                f"ouija rerun against {result.target} (attack set: "
+                f"{result.attack_set}) found 0 findings across "
+                f"{result.patterns_sent} attack request(s) — recovering "
+                f"the prior VictorOps incident."
+            ),
+            "state_start_time": start_time,
+            "monitoring_tool": monitoring_tool,
+            "ouija_scan_id": result.scan_id,
+            "ouija_attack_set": result.attack_set,
+            "ouija_patterns_sent": result.patterns_sent,
+            "ouija_version": result.version,
+        }
+        return json.dumps(recovery_payload, indent=2)
+
+    top = findings[0]
+    message_type = _VICTOROPS_MESSAGE_TYPE.get(top.severity, "INFO")
+
+    entity_display_name = (
+        f"ouija: {len(findings)} finding(s) on {result.target} "
+        f"[top severity: {top.severity.value}]"
+    )
+
+    severity_counts: dict[str, int] = {}
+    for f in findings:
+        key = f.severity.value
+        severity_counts[key] = severity_counts.get(key, 0) + 1
+
+    state_message_lines = [
+        f"ouija scan of {result.target} (attack set: {result.attack_set}) "
+        f"returned {len(findings)} finding(s) across {result.patterns_sent} "
+        f"attack request(s).",
+        "",
+        f"Top finding: [{top.severity.value.upper()}] {top.title} "
+        f"(category: {top.category}, OWASP: {top.owasp}, id: {top.id})",
+        "",
+        "Severity breakdown: "
+        + ", ".join(f"{k}={v}" for k, v in severity_counts.items()),
+        "",
+        "Full evidence (prompts, response excerpts, multi-turn transcripts) "
+        "is in the --format json report — this incident is the page, the "
+        "JSON report is the evidence.",
+    ]
+    state_message = "\n".join(state_message_lines)
+
+    finding_records = [
+        {
+            "id": f.id,
+            "severity": f.severity.value,
+            "title": f.title,
+            "category": f.category,
+            "owasp": f.owasp,
+            "pattern_id": f.pattern_id,
+            "technique": f.technique,
+            "confidence": round(f.confidence, 3),
+        }
+        for f in findings
+    ]
+
+    payload: dict[str, Any] = {
+        "message_type": message_type,
+        "entity_id": entity_id,
+        "entity_display_name": entity_display_name,
+        "state_message": state_message,
+        "state_start_time": start_time,
+        "monitoring_tool": monitoring_tool,
+        "ouija_scan_id": result.scan_id,
+        "ouija_attack_set": result.attack_set,
+        "ouija_patterns_sent": result.patterns_sent,
+        "ouija_version": result.version,
+        "ouija_findings_total": len(findings),
+        "ouija_severity_counts": severity_counts,
+        "ouija_top_finding": {
+            "id": top.id,
+            "severity": top.severity.value,
+            "title": top.title,
+            "owasp": top.owasp,
+        },
+        "ouija_findings": finding_records,
+    }
+    return json.dumps(payload, indent=2)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -1528,6 +1817,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_pagerduty(result)
     if fmt == "opsgenie":
         return to_opsgenie(result)
+    if fmt == "victorops":
+        return to_victorops(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif

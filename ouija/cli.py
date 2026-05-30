@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "victorops", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -123,7 +123,18 @@ def build_parser() -> argparse.ArgumentParser:
             "the `Authorization: GenieKey <key>` HTTP HEADER at curl time "
             "(NOT a body field, unlike `pagerduty`), and a zero-finding run "
             "emits a Close-Alert payload against the same alias so a clean "
-            "rerun closes the prior alert automatically), or 'sarif' "
+            "rerun closes the prior alert automatically), 'victorops' "
+            "(a VictorOps / Splunk On-Call REST integration payload — single "
+            "aggregated event per scan whose `message_type` is mapped from "
+            "the top finding's severity (critical/high→CRITICAL, "
+            "medium→WARNING, low/info→INFO), with per-finding records under "
+            "`ouija_findings` and a stable `entity_id` derived from "
+            "target+attack-set so re-scanning the same target updates the "
+            "same incident; both the VictorOps API key and routing key are "
+            "supplied via the integration URL path at curl time (NOT body "
+            "fields), and a zero-finding run emits a `message_type: "
+            "RECOVERY` payload against the same entity_id so a clean rerun "
+            "auto-recovers the prior incident), or 'sarif' "
             "(SARIF 2.1.0 for GitHub code-scanning / CI security dashboards). "
             "SARIF maps each attack category to a rule and each finding to a "
             "result with a GitHub-compatible security-severity; pair it with "
