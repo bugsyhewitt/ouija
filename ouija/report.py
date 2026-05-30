@@ -942,6 +942,262 @@ def to_slack(result: ScanResult) -> str:
     return json.dumps(payload, indent=2)
 
 
+# ---------------------------------------------------------------------------
+# PagerDuty Events API v2 payload (`--format pagerduty`)
+# ---------------------------------------------------------------------------
+# Reference: https://developer.pagerduty.com/docs/3d063fd4814a6-events-api-v2-overview
+# Reference: https://developer.pagerduty.com/api-reference/368ae3d938c9e-send-an-event
+#
+# The Events API v2 endpoint (https://events.pagerduty.com/v2/enqueue) accepts
+# a single JSON document with a fixed shape:
+#
+#   {
+#     "routing_key": "<32-char Events-API-v2 integration key>",
+#     "event_action": "trigger" | "acknowledge" | "resolve",
+#     "dedup_key":   "<stable key — events sharing this key collapse into
+#                     a single incident; an `event_action: resolve` against
+#                     the same dedup_key closes the incident>",
+#     "payload": {
+#       "summary":   "<<= 1024-char one-line description>",
+#       "severity":  "critical" | "error" | "warning" | "info",
+#       "source":    "<the affected component / hostname / URL>",
+#       "component": "<optional>",
+#       "group":     "<optional>",
+#       "class":     "<optional>",
+#       "timestamp": "<ISO-8601>",
+#       "custom_details": { ... arbitrary JSON-serialisable object ... }
+#     }
+#   }
+#
+# Severity must be one of the four PagerDuty-defined strings — there is no
+# "high" / "medium" / "low" / "info" set; ouija's five-bucket scale maps as:
+#
+#   ouija       → PagerDuty
+#   critical    → critical
+#   high        → error
+#   medium      → warning
+#   low         → info
+#   info        → info
+#
+# A clean run (zero findings) emits `event_action: resolve` against the same
+# dedup_key the prior trigger would have used, so a rerun that finds nothing
+# automatically closes the previous PagerDuty incident — the same "alert" /
+# "no longer alert" pairing PagerDuty's own integrations (Datadog, Nagios,
+# Prometheus Alertmanager) follow.
+
+# Ouija severity -> PagerDuty Events-API-v2 severity. PagerDuty only accepts
+# the four strings below; anything else is rejected at enqueue time with HTTP
+# 400. Map ouija's five-bucket scale into the four PagerDuty buckets.
+_PAGERDUTY_SEVERITY: dict[Severity, str] = {
+    Severity.CRITICAL: "critical",
+    Severity.HIGH: "error",
+    Severity.MEDIUM: "warning",
+    Severity.LOW: "info",
+    Severity.INFO: "info",
+}
+
+# Literal placeholder the operator MUST substitute before POSTing. Emitting a
+# placeholder (rather than reading the key from an env var inside ouija) keeps
+# the same "ouija renders, you pipe" boundary every other format honours:
+# `--format slack` does not POST to Slack, `--format sarif` does not upload to
+# code-scanning, and `--format pagerduty` does not enqueue to PagerDuty. The
+# operator substitutes once (`sed`, `jq --arg`, env-templating, etc.) and pipes
+# the result into `curl`. This also keeps the routing key off the ouija
+# command line and out of the scan artifact / log stream.
+_PAGERDUTY_ROUTING_KEY_PLACEHOLDER = "YOUR_PAGERDUTY_ROUTING_KEY"
+
+# PagerDuty's `payload.summary` field is hard-capped at 1024 characters; events
+# whose summary exceeds the cap are rejected. We render an at-a-glance
+# one-line summary so the cap is comfortable on real scans, but truncate
+# defensively against very long target URLs or very large finding counts.
+_PAGERDUTY_SUMMARY_CAP = 1024
+
+
+def _pagerduty_dedup_key(result: ScanResult) -> str:
+    """Stable dedup_key derived from target + attack-set.
+
+    PagerDuty collapses events sharing a ``dedup_key`` into a single incident
+    and pairs ``event_action: resolve`` against the same key to close it. We
+    want re-scanning the SAME target with the SAME attack set to update the
+    SAME incident (so a triager isn't deluged with one new incident per
+    rescan), and a later clean run to resolve it. Using ``scan_id`` would
+    defeat that — every scan has a fresh random ``scan_id`` — so we key on
+    the stable scan inputs instead: target URL + attack set.
+    """
+    return f"ouija::{result.target}::{result.attack_set}"
+
+
+def to_pagerduty(result: ScanResult) -> str:
+    """Render the scan as a PagerDuty Events API v2 enqueue payload.
+
+    Where ``--format slack`` is the chat-channel alert and ``--format sarif``
+    is the CI / code-scanning artifact, ``--format pagerduty`` is the
+    on-call / incident-response surface: an Events-API-v2-shaped JSON
+    document the operator pipes straight into
+    ``https://events.pagerduty.com/v2/enqueue`` to page whoever owns the LLM
+    endpoint. The payload is one *aggregated* event per scan (not one event
+    per finding) — PagerDuty's incident model is alert-per-symptom, not
+    alert-per-detail, and a single ouija scan that turns up 12 prompt-
+    injection findings should page the on-call as ONE incident ("ouija found
+    12 LLM-security issues on https://api.example.com/v1/chat"), with the
+    per-finding breakdown carried under ``payload.custom_details`` where the
+    incident-detail UI renders it as structured JSON.
+
+    Usage:
+
+    .. code-block:: bash
+
+        ouija --target https://api.example.com/v1/chat --scope-file scope.txt \\
+              --format pagerduty > pd.json
+        # substitute your Events-API-v2 integration key:
+        sed -i 's/YOUR_PAGERDUTY_ROUTING_KEY/'"$PD_ROUTING_KEY"'/' pd.json
+        curl -X POST -H 'Content-Type: application/json' \\
+             --data @pd.json https://events.pagerduty.com/v2/enqueue
+
+    Behaviour:
+
+    * A run with one or more findings emits ``event_action: trigger`` and a
+      ``payload.severity`` mapped from the *highest* finding severity in the
+      run (ouija ``critical`` → PD ``critical``, ``high`` → ``error``,
+      ``medium`` → ``warning``, ``low`` / ``info`` → ``info``).
+    * A *clean* run (zero findings) emits ``event_action: resolve`` against
+      the same stable ``dedup_key`` a prior trigger would have used, so a
+      rerun that finds nothing automatically closes the previous PagerDuty
+      incident — the same "alert" / "no longer alert" pairing PagerDuty's
+      own integrations (Datadog, Prometheus Alertmanager, Nagios) follow.
+    * ``dedup_key`` is derived from target + attack-set (not the per-run
+      random ``scan_id``) so re-scanning the SAME target with the SAME
+      attack set updates the SAME incident instead of flooding the on-call
+      with a new incident per rescan.
+    * ``routing_key`` is emitted as the literal placeholder string
+      ``YOUR_PAGERDUTY_ROUTING_KEY``; the operator substitutes it once
+      before piping into ``curl``. This keeps the integration key off the
+      ouija command line and out of the scan artifact / log stream, and
+      preserves the same "ouija renders, you pipe" boundary every other
+      format honours (``--format slack`` does not POST to Slack,
+      ``--format sarif`` does not upload to code-scanning).
+
+    [Worker decision (Phase 2 / R33): chose ``--format pagerduty``
+    (PagerDuty Events API v2 payload) over ``--format jira`` (Jira REST
+    issue-create payload). Both were unshipped post-v0.1 directions and both
+    extend the same "render-only, you pipe" pattern every prior format
+    follows. PagerDuty Events API v2 has a single fixed payload schema
+    (``routing_key``, ``event_action``, ``dedup_key``, ``payload.{summary,
+    severity, source, custom_details, ...}``) accepted by every PagerDuty
+    account with no per-tenant variation, so the payload ouija emits works
+    against any account by substituting the integration key. Jira's
+    issue-create payload, by contrast, requires the caller to know the
+    target tenant's project key, issue type, and any required custom fields
+    — values ouija cannot know at scan time — so a Jira format would
+    either need an additional ``--jira-project-key`` / ``--jira-issue-type``
+    flag surface OR emit a placeholder that fails against most real Jira
+    instances. PagerDuty's single-payload-fits-all-tenants shape is the
+    more tractable, more deterministic deliverable. It also closes a real
+    operational gap: ouija already covers chat alerts (``--format slack``,
+    ``--notify``), CI / code-scanning (``--format sarif``), and triager
+    hand-off (``--format csv``, ``--format html``), but had no surface for
+    paging the on-call when a scheduled scan against production turns up a
+    high/critical finding. Same shape as ``to_slack`` (pure stdlib JSON
+    shaping over the final :class:`~ouija.models.ScanResult` — touches no
+    scanner state, no architecture).]
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+    dedup_key = _pagerduty_dedup_key(result)
+
+    # Clean run — emit a `resolve` against the stable dedup_key so a prior
+    # `trigger` against the same target+attack-set is auto-closed. Per the
+    # Events API v2 spec a `resolve` event is the minimal shape: routing_key
+    # + event_action + dedup_key only; `payload` is NOT required (and is
+    # ignored if present) for non-trigger actions.
+    if not findings:
+        resolve_payload: dict[str, Any] = {
+            "routing_key": _PAGERDUTY_ROUTING_KEY_PLACEHOLDER,
+            "event_action": "resolve",
+            "dedup_key": dedup_key,
+        }
+        return json.dumps(resolve_payload, indent=2)
+
+    top = findings[0]
+    pd_severity = _PAGERDUTY_SEVERITY.get(top.severity, "info")
+
+    # One-line summary — what lands in the on-call's phone notification.
+    # Cap defensively against the 1024-char Events-API limit.
+    summary = (
+        f"ouija: {len(findings)} finding(s) on {result.target} "
+        f"[top severity: {top.severity.value}]"
+    )
+    if len(summary) > _PAGERDUTY_SUMMARY_CAP:
+        summary = summary[: _PAGERDUTY_SUMMARY_CAP - 1] + "…"
+
+    # Per-finding compact records under custom_details. Keep each record
+    # small enough that a heavy scan (dozens of findings) still produces a
+    # payload PagerDuty will accept. Full prompts / response excerpts /
+    # multi-turn transcripts stay in `--format json` — this payload is the
+    # *alert*, the JSON report is the *evidence* (same rule as `--notify` /
+    # `--format slack`).
+    finding_records = [
+        {
+            "id": f.id,
+            "severity": f.severity.value,
+            "title": f.title,
+            "category": f.category,
+            "owasp": f.owasp,
+            "pattern_id": f.pattern_id,
+            "technique": f.technique,
+            "confidence": round(f.confidence, 3),
+        }
+        for f in findings
+    ]
+
+    # Severity-bucket counts so the incident detail surfaces the breakdown
+    # without the on-call having to count rows.
+    severity_counts: dict[str, int] = {}
+    for f in findings:
+        key = f.severity.value
+        severity_counts[key] = severity_counts.get(key, 0) + 1
+
+    custom_details: dict[str, Any] = {
+        "tool": result.tool,
+        "ouija_version": result.version,
+        "scan_id": result.scan_id,
+        "attack_set": result.attack_set,
+        "patterns_sent": result.patterns_sent,
+        "findings_total": len(findings),
+        "severity_counts": severity_counts,
+        "top_finding": {
+            "id": top.id,
+            "severity": top.severity.value,
+            "title": top.title,
+            "owasp": top.owasp,
+        },
+        "findings": finding_records,
+    }
+
+    payload: dict[str, Any] = {
+        "routing_key": _PAGERDUTY_ROUTING_KEY_PLACEHOLDER,
+        "event_action": "trigger",
+        "dedup_key": dedup_key,
+        "payload": {
+            "summary": summary,
+            "severity": pd_severity,
+            "source": result.target,
+            "component": "llm-endpoint",
+            "group": result.attack_set,
+            "class": "llm-security-finding",
+            "timestamp": result.timestamp,
+            "custom_details": custom_details,
+        },
+        # Optional `client` / `client_url` fields surface in the PagerDuty
+        # incident header as "Reported by". Identifying the tool makes the
+        # incident self-describing without a triager having to read
+        # custom_details first.
+        "client": f"ouija v{result.version}",
+    }
+    return json.dumps(payload, indent=2)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -957,6 +1213,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_markdown_table(result)
     if fmt == "slack":
         return to_slack(result)
+    if fmt == "pagerduty":
+        return to_pagerduty(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif
