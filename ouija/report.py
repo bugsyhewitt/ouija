@@ -6,6 +6,7 @@ import csv
 import html
 import io
 import json
+from typing import Any
 
 from ouija.models import Finding, ScanResult, Severity
 
@@ -667,6 +668,280 @@ def to_markdown_table(result: ScanResult) -> str:
     return "\n".join(rows)
 
 
+# Per-severity "attachment color" bar accents for the Slack Block Kit payload.
+# Slack renders ``attachments[].color`` as a coloured left border on the message
+# card, which is the standard severity-at-a-glance visual signal in
+# security-tool Slack integrations (matches how PagerDuty, Snyk, gitleaks and
+# similar tools highlight critical/high findings). Values are the documented
+# Slack-good/warning/danger aliases for medium/low/info-equivalents and explicit
+# hex for the elevated severities to differentiate critical from high.
+_SLACK_SEVERITY_COLOR: dict[Severity, str] = {
+    Severity.CRITICAL: "#b30000",
+    Severity.HIGH: "#d9480f",
+    Severity.MEDIUM: "warning",
+    Severity.LOW: "#1c7ed6",
+    Severity.INFO: "#5c6770",
+}
+
+# Slack message-text rendering uses "mrkdwn" — Slack's markdown DIALECT — which
+# is NOT GitHub-flavoured-markdown. The two important divergences for our
+# payload: (a) bold is ``*bold*`` (single asterisks), not ``**bold**``; (b)
+# Slack does NOT render GFM pipe-tables, which is why ``--format markdown-table``
+# is unreadable when posted to a Slack channel and this format exists. See
+# https://api.slack.com/reference/surfaces/formatting for the dialect.
+
+# Maximum number of full per-finding "section" blocks we render. Slack imposes a
+# hard 50-block limit per message and truncates beyond that; cap conservatively
+# so the run summary + per-finding sections + footer stay well under the limit
+# even on a heavy scan, and surface the overflow count in the footer.
+_SLACK_MAX_FINDING_BLOCKS = 20
+
+# Per-finding excerpt cap so a single noisy finding cannot blow past Slack's
+# 3000-character per-section-text limit (we render summary + impact in one
+# section block; keep each piece comfortably under the cap).
+_SLACK_TEXT_CAP = 600
+
+
+def _slack_escape(text: str) -> str:
+    """Escape *text* for safe inclusion in a Slack ``mrkdwn`` text field.
+
+    Slack treats ``&``, ``<`` and ``>`` as control characters used to delimit
+    its own link / user-mention / channel-reference syntax (e.g.
+    ``<http://example.com|click>``, ``<@U123>``, ``<!channel>``). An
+    unescaped ``<`` or ``>`` in attacker-influenced content (a response excerpt
+    that happens to contain ``<script>``, exactly the active-content sink ouija
+    reports) would otherwise be parsed by Slack as the start of one of those
+    constructs and corrupt the surrounding message. The Slack-documented
+    escapes are ``&amp;`` / ``&lt;`` / ``&gt;``. We do these in
+    ``&``-first order so we don't double-escape an already-escaped sequence.
+    """
+    if not text:
+        return ""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _slack_truncate(text: str, cap: int = _SLACK_TEXT_CAP) -> str:
+    """Truncate *text* to *cap* characters with a trailing ellipsis marker.
+
+    A single multi-line attacker-shaped excerpt could otherwise push a section
+    block past Slack's 3000-char per-text limit and the message would be
+    rejected. Truncation here is purely a Slack-surface constraint — the full
+    evidence is always available in the ``--format json`` report; this payload
+    is the *alert*, the JSON report is the *evidence* (same rule as ``notify``).
+    """
+    if not text:
+        return ""
+    s = str(text)
+    if len(s) <= cap:
+        return s
+    return s[: cap - 1].rstrip() + "…"
+
+
+def to_slack(result: ScanResult) -> str:
+    """Render the scan as a Slack Block Kit JSON payload (``--format slack``).
+
+    Where ``--format markdown-table`` renders inline in GitHub markdown but
+    appears as raw, unrendered pipe-text in Slack (Slack's ``mrkdwn`` dialect
+    does NOT support GFM tables), ``--format slack`` is the Slack-native
+    rendering: a Block Kit ``blocks`` array wrapped in an ``attachments[0]``
+    coloured by the top finding's severity, so the message lands with a
+    severity-accented sidebar, a header, a run-summary section, and one
+    section block per finding (capped, with an overflow line). Redirect the
+    payload to a file or pipe it directly into a Slack incoming webhook:
+
+    .. code-block:: bash
+
+        ouija --target … --scope-file scope.txt --format slack > slack.json
+        curl -X POST -H 'Content-Type: application/json' \\
+             --data @slack.json "$SLACK_WEBHOOK_URL"
+
+    [Worker decision (Phase 2 / R32): chose ``--format slack`` (Slack Block Kit
+    JSON) over ``--format pdf``. Both were unshipped post-v0.1 directions.
+    R30 already assessed and rejected ``--format pdf`` because PDF rendering
+    requires a heavy third-party dependency (weasyprint / reportlab) that
+    fights ouija's deliberately-minimal dependency surface (httpx + pydantic
+    only), and a stakeholder who wants a PDF can already render
+    ``--format html`` to PDF via the browser or ``wkhtmltopdf`` without ouija
+    owning the rendering toolchain. That assessment still holds at R32. Slack,
+    by contrast, is a pure-stdlib JSON shaping function over the final
+    :class:`~ouija.models.ScanResult` — identical in shape to
+    ``to_json``/``to_jsonl``/``to_sarif`` — so it touches no scanner state and
+    no architecture, matching how every prior format was added. It also
+    closes a real, observed gap: ``--format markdown-table`` is advertised as
+    "renders inline in Slack" but Slack's ``mrkdwn`` does not support GFM
+    pipe-tables, so that format actually appears as raw text in a Slack
+    channel; ``--format slack`` is the correct native rendering. Composes
+    naturally with ``--notify`` (which sends a compact webhook digest):
+    ``--format slack`` is for when the operator wants the full rendered Block
+    Kit payload, ``--notify`` is the lightweight side-channel alert.
+
+    SECURITY: every attacker-influenced value (titles, prompts, response
+    excerpts, evidence) is Slack-escaped via :func:`_slack_escape` before
+    insertion, so a finding whose response contains ``<script>`` /
+    ``<@user>`` / ``<!channel>`` — exactly the active-content / mention
+    injection class — cannot smuggle Slack syntax into the rendered message.
+    Per-section text is also length-capped (the full evidence stays in the
+    ``--format json`` report) so no single noisy finding can exceed Slack's
+    3000-char per-section limit.]
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+
+    # Top severity drives the attachment color — same rule as the notify
+    # payload's ``top_severity``: highest of the run, or None for a clean run.
+    top_color: str | None = None
+    if findings:
+        top_color = _SLACK_SEVERITY_COLOR.get(findings[0].severity)
+
+    blocks: list[dict[str, Any]] = []
+
+    # Header — the message title that lands in the channel notification list.
+    # ``header`` blocks accept plain_text only (no mrkdwn), max 150 chars.
+    header_text = f"ouija findings: {result.target}"
+    if len(header_text) > 150:
+        header_text = header_text[:149] + "…"
+    blocks.append(
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": header_text, "emoji": True},
+        }
+    )
+
+    # Summary — the run identity / counts the triager wants at a glance.
+    summary_lines = [
+        f"*Target:* `{_slack_escape(result.target)}`",
+        f"*Attack set:* `{_slack_escape(result.attack_set)}`",
+        f"*Requests sent:* {result.patterns_sent}",
+        f"*Findings:* {len(findings)}",
+        f"*ouija version:* {_slack_escape(result.version)}",
+    ]
+    blocks.append(
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(summary_lines)},
+        }
+    )
+
+    if not findings:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        ":white_check_mark: *No findings.* The target refused "
+                        "or sanitized all probes in this attack set."
+                    ),
+                },
+            }
+        )
+    else:
+        blocks.append({"type": "divider"})
+
+        shown = findings[:_SLACK_MAX_FINDING_BLOCKS]
+        overflow = len(findings) - len(shown)
+
+        for idx, f in enumerate(shown, start=1):
+            sev = f.severity.value.upper()
+            reliability = ""
+            if f.attempts > 1:
+                reliability = (
+                    f" · *Reliability:* {f.successes}/{f.attempts} "
+                    f"({f.success_rate:.0%})"
+                )
+            title_line = (
+                f"*{idx}. [{sev}] {_slack_escape(f.title)}*"
+            )
+            meta_line = (
+                f"*Category:* `{_slack_escape(f.category)}` · "
+                f"*OWASP:* `{_slack_escape(f.owasp)}` · "
+                f"*Confidence:* {f.confidence:.0%}{reliability}"
+            )
+            id_line = (
+                f"*Finding ID:* `{_slack_escape(f.id)}` · "
+                f"*Pattern:* `{_slack_escape(f.pattern_id)}` "
+                f"(technique: {_slack_escape(f.technique)})"
+            )
+            evidence_line = (
+                "*Evidence:* "
+                + _slack_escape(_slack_truncate(f.evidence))
+            )
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "\n".join(
+                            [title_line, meta_line, id_line, evidence_line]
+                        ),
+                    },
+                }
+            )
+
+        if overflow > 0:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"_… {overflow} additional finding(s) not "
+                            f"shown (Slack block-limit). Read the full "
+                            f"`--format json` report for the rest._"
+                        ),
+                    },
+                }
+            )
+
+    # Footer — context block holds small grey caption text at the bottom.
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"Generated by ouija v{_slack_escape(result.version)} "
+                        f"· scan `{_slack_escape(result.scan_id)}` "
+                        f"· {_slack_escape(result.timestamp)}"
+                    ),
+                }
+            ],
+        }
+    )
+
+    # Plain-text fallback for notification previews / accessibility / clients
+    # that cannot render Block Kit. Slack uses ``text`` as the notification
+    # preview and the screen-reader label.
+    fallback_text = (
+        f"ouija scan of {result.target}: "
+        f"{len(findings)} finding(s) across {result.patterns_sent} request(s)."
+    )
+
+    payload: dict[str, Any] = {
+        "text": fallback_text,
+        "attachments": [
+            {
+                # ``color`` is the coloured left border on the message card.
+                # ``blocks`` inside the attachment is the modern Block Kit
+                # rendering — the attachment wrapper exists purely to carry
+                # the color accent; the content is Block Kit, not the legacy
+                # attachment fields. Omit ``color`` entirely on a clean run.
+                **({"color": top_color} if top_color else {}),
+                "blocks": blocks,
+                "fallback": fallback_text,
+            }
+        ],
+    }
+    return json.dumps(payload, indent=2)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -680,6 +955,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_html(result)
     if fmt == "markdown-table":
         return to_markdown_table(result)
+    if fmt == "slack":
+        return to_slack(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif

@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -95,9 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
             "execute when the report is viewed), 'markdown-table' (a compact "
             "one-screen GitHub-flavoured-markdown table — header row plus one row "
             "per finding, severity-sorted, pipe-escaped — that renders inline in "
-            "a GitHub issue, PR comment, README, Slack/Discord message, or any "
+            "a GitHub issue, PR comment, README, or any GitHub-flavoured-"
             "markdown surface; the answer to 'what did the scan find?' at a "
-            "glance, with full evidence available in 'json'/'h1md'), or 'sarif' "
+            "glance, with full evidence available in 'json'/'h1md'), 'slack' "
+            "(a Slack Block Kit JSON payload — header + run summary + one "
+            "section block per finding, wrapped in a severity-coloured "
+            "attachment; pipe it directly into a Slack incoming webhook "
+            "via `curl --data @-`, since Slack's 'mrkdwn' dialect does NOT "
+            "render the GFM tables 'markdown-table' produces), or 'sarif' "
             "(SARIF 2.1.0 for GitHub code-scanning / CI security dashboards). "
             "SARIF maps each attack category to a rule and each finding to a "
             "result with a GitHub-compatible security-severity; pair it with "
