@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README / Slack message), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -275,9 +275,11 @@ section per finding, with reproduction steps and impact prose), and
 markdown-table`** is the *one-screen triage view*: a single
 GitHub-flavoured-markdown table — header row, separator row, and one row per
 finding, severity-sorted — that renders inline in a GitHub issue, PR comment,
-project README, Slack/Discord message, or any markdown-rendered surface. It
-is the answer to "what did the scan find?" at a glance; full evidence stays
-available in `--format json` / `--format h1md`.
+project README, or any GitHub-flavoured-markdown-rendered surface. It is the
+answer to "what did the scan find?" at a glance; full evidence stays
+available in `--format json` / `--format h1md`. Note: Slack's `mrkdwn` dialect
+does NOT render GFM pipe-tables, so for Slack use `--format slack` (Block Kit
+JSON) instead — that is its own section below.
 
 ```bash
 # Drop a triage summary straight into a GitHub issue body
@@ -316,6 +318,67 @@ A zero-finding run still emits the title line, header, and separator (with no
 data rows) so a downstream template (e.g. a PR-comment macro) always sees the
 table shape. Pipes (`|`) and newlines inside any cell are escaped / collapsed,
 so even hostile content keeps the row count well-formed.
+
+## Slack output (`--format slack`)
+
+Where `--format markdown-table` renders inline in *GitHub*-flavoured-markdown
+surfaces, **`--format slack`** is the Slack-native rendering: a [Slack Block
+Kit](https://api.slack.com/block-kit) JSON payload (a `header` block, a run-
+summary `section`, one `section` per finding, a footer `context` block) wrapped
+in an `attachments[0]` whose `color` reflects the highest finding severity in
+the run. Slack's `mrkdwn` dialect does **not** render GFM pipe-tables — pasting
+`--format markdown-table` output into a Slack channel shows raw pipe-text, not
+a table — so `--format slack` is the correct format for Slack delivery.
+
+Pipe it straight into a Slack incoming webhook:
+
+```bash
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --format slack \
+  | curl -X POST -H 'Content-Type: application/json' \
+         --data @- "$SLACK_WEBHOOK_URL"
+```
+
+Or save it as an artifact and post it from a CI step:
+
+```bash
+ouija ... --format slack > slack.json
+curl -X POST -H 'Content-Type: application/json' \
+     --data @slack.json "$SLACK_WEBHOOK_URL"
+```
+
+You can also paste the payload into the [Slack Block Kit
+Builder](https://app.slack.com/block-kit-builder) to preview the rendering
+before wiring up a webhook.
+
+What the rendered message contains, in order:
+
+* a **header** block carrying the target;
+* a **summary** section — target, attack set, requests sent, findings count,
+  ouija version;
+* one **section** per finding (severity-sorted, critical first) carrying the
+  title with a `[SEVERITY]` prefix, the category / OWASP / confidence /
+  reliability line, the finding ID + pattern ID + technique, and a truncated
+  evidence line;
+* a **context** footer with the scan ID and timestamp.
+
+Two operational caps protect the message against Slack's hard limits: a heavy
+scan that emits more than 20 findings shows the top 20 plus an overflow line
+("… N additional finding(s) not shown"), and per-section evidence is truncated
+to keep each section text comfortably under Slack's 3000-char per-text cap.
+Full prompts, response excerpts, and multi-turn transcripts are NOT in the
+Slack payload — read `--format json` / `--format h1md` for those; the Slack
+message is the *alert*, the JSON report is the *evidence* (same rule as
+[`--notify`](#webhook-notifications---notify)). All attacker-influenced
+values (titles, evidence, IDs) are Slack-escaped (`<` → `&lt;`, `>` → `&gt;`,
+`&` → `&amp;`), so a finding whose response contains `<script>`, `<@U123>`,
+or `<!channel>` cannot smuggle Slack syntax into the rendered message.
+
+For the lightweight chat-bot alert (one POST with a compact JSON summary, no
+Block Kit rendering, fired automatically at the end of the scan), see
+[`--notify`](#webhook-notifications---notify) instead. `--format slack` is
+the *rendered Block Kit payload*; `--notify` is the *side-channel alert*.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 
