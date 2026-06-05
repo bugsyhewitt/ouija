@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "victorops", "jira", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "victorops", "jira", "teams", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -145,7 +145,15 @@ def build_parser() -> argparse.ArgumentParser:
             "POSTing to "
             "https://<domain>.atlassian.net/rest/api/3/issue — the bearer "
             "token travels in the Authorization header at curl time, not in "
-            "the payload body), or 'sarif' "
+            "the payload body), 'teams' "
+            "(a Microsoft Teams incoming-webhook MessageCard JSON payload — "
+            "one card per scan with a themeColor accent bar driven by the top "
+            "finding's severity (critical→red, high→orange, medium→amber, "
+            "low→blue, info→grey, no findings→green), a run-summary facts "
+            "section, and one per-finding section carrying severity, category, "
+            "OWASP mapping, confidence, and truncated evidence; pipe directly "
+            "into a Teams incoming-webhook connector URL via `curl --data @-`; "
+            "a zero-finding run emits a green 'No findings' card), or 'sarif' "
             "(SARIF 2.1.0 for GitHub code-scanning / CI security dashboards). "
             "SARIF maps each attack category to a rule and each finding to a "
             "result with a GitHub-compatible security-severity; pair it with "

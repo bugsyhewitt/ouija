@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), `opsgenie` (an OpsGenie Alert API v2 create-alert payload — one aggregated alert per scan, `priority` mapped 1:1 from the top finding's severity (critical→P1 … info→P5), stable `alias` so reruns update the same alert, and a Close-Alert payload on a clean run to auto-close the prior alert; pipe into `https://api.opsgenie.com/v2/alerts` with an `Authorization: GenieKey <key>` header), `victorops` (a VictorOps / Splunk On-Call REST integration payload — one aggregated event per scan, `message_type` mapped from the top finding's severity (critical/high→CRITICAL, medium→WARNING, low/info→INFO), stable `entity_id` so reruns update the same incident, and a `message_type: RECOVERY` payload on a clean run to auto-recover the prior incident; pipe into `https://alert.victorops.com/integrations/generic/20131114/alert/<api-key>/<routing-key>`), `jira` (a Jira Cloud REST API v3 Create Issue JSON body — one aggregated issue per scan, ADF description with per-finding detail blocks, `priority` mapped from top-finding severity (critical→Highest, high→High, medium→Medium, low/info→Low), `fields.project.key` and `fields.issuetype.name` emitted as operator-substitutable placeholders, bearer token in the Authorization header at curl time; POST to `https://<domain>.atlassian.net/rest/api/3/issue`), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), [OpsGenie output](#opsgenie-output-format-opsgenie), [VictorOps output](#victorops-output-format-victorops), [Jira output](#jira-output-format-jira), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), `opsgenie` (an OpsGenie Alert API v2 create-alert payload — one aggregated alert per scan, `priority` mapped 1:1 from the top finding's severity (critical→P1 … info→P5), stable `alias` so reruns update the same alert, and a Close-Alert payload on a clean run to auto-close the prior alert; pipe into `https://api.opsgenie.com/v2/alerts` with an `Authorization: GenieKey <key>` header), `victorops` (a VictorOps / Splunk On-Call REST integration payload — one aggregated event per scan, `message_type` mapped from the top finding's severity (critical/high→CRITICAL, medium→WARNING, low/info→INFO), stable `entity_id` so reruns update the same incident, and a `message_type: RECOVERY` payload on a clean run to auto-recover the prior incident; pipe into `https://alert.victorops.com/integrations/generic/20131114/alert/<api-key>/<routing-key>`), `jira` (a Jira Cloud REST API v3 Create Issue JSON body — one aggregated issue per scan, ADF description with per-finding detail blocks, `priority` mapped from top-finding severity (critical→Highest, high→High, medium→Medium, low/info→Low), `fields.project.key` and `fields.issuetype.name` emitted as operator-substitutable placeholders, bearer token in the Authorization header at curl time; POST to `https://<domain>.atlassian.net/rest/api/3/issue`), `teams` (a Microsoft Teams incoming-webhook MessageCard JSON payload — one card per scan, themeColor accent bar driven by top-finding severity (critical→red, high→orange, medium→amber, low→blue, info→grey, no findings→green), run-summary facts section, one per-finding section per finding severity-sorted and capped, HTML-escaped attacker values; pipe directly into a Teams incoming-webhook connector URL), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), [OpsGenie output](#opsgenie-output-format-opsgenie), [VictorOps output](#victorops-output-format-victorops), [Jira output](#jira-output-format-jira), [Teams output](#microsoft-teams-output---format-teams), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -678,6 +678,42 @@ The payload also carries an `ouija_meta` sidecar with the scan identity
 fields (`scan_id`, `version`, `target`, `attack_set`, `patterns_sent`,
 `findings_total`, `severity_counts`) so you can correlate the Jira issue
 back to a specific ouija run without opening the full JSON report.
+
+## Microsoft Teams output (`--format teams`)
+
+`--format teams` renders the scan as a **Microsoft Teams incoming-webhook
+MessageCard JSON payload** — the Teams-native equivalent of `--format slack`
+(Slack Block Kit).  Where `--format slack` targets Slack channels, `--format
+teams` targets Microsoft Teams channels via an [incoming-webhook
+connector](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/connectors-using).
+Post it directly to a Teams incoming-webhook URL with no extra service or
+transformation:
+
+```bash
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --format teams > teams.json
+curl -X POST -H 'Content-Type: application/json' \
+     --data @teams.json "$TEAMS_WEBHOOK_URL"
+```
+
+The card structure:
+
+- **themeColor** — a hex-colour accent bar on the left border of the card,
+  driven by the top finding's severity (`critical→red`, `high→orange`,
+  `medium→amber`, `low→blue`, `info→grey`, `no findings→green`).
+- **Run summary section** — target URL, attack set, request count, finding
+  count, ouija version, and scan ID as a facts key-value list.
+- **Per-finding sections** — one section per finding (severity-sorted), each
+  carrying category, OWASP mapping, confidence, pattern ID, technique, finding
+  ID, and truncated evidence text.  When `--repeats > 1` a "Reliability" fact
+  carries the hit-rate (e.g. `3/5 (60%)`).
+- **Clean-run card** — a zero-finding run emits a green-accented card with a
+  "No findings" section, immediately distinguishable in the Teams channel.
+
+Cards are capped at 20 per-finding sections; a heavier scan emits an overflow
+note pointing to `--format json` for the full evidence.  All attacker-influenced
+values (titles, evidence, IDs) are HTML-escaped before insertion.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 

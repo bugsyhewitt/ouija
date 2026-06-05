@@ -2068,6 +2068,250 @@ def to_jira(result: ScanResult) -> str:
     return json.dumps(payload, indent=2)
 
 
+# ---------------------------------------------------------------------------
+# Microsoft Teams incoming-webhook payload (`--format teams`)
+# ---------------------------------------------------------------------------
+# Reference: https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/connectors-using
+# Reference: https://learn.microsoft.com/en-us/outlook/actionable-messages/message-card-reference
+#
+# Teams incoming webhooks accept a "MessageCard" JSON payload posted to the
+# connector URL.  A MessageCard has this top-level shape:
+#
+#   {
+#     "@type":       "MessageCard",
+#     "@context":    "https://schema.org/extensions",
+#     "themeColor":  "<6-char hex — the coloured top border on the card>",
+#     "summary":     "<one-line plaintext — notification / preview text>",
+#     "title":       "<card title, supports limited HTML>",
+#     "sections":    [ { "activityTitle": "...", "facts": [...], "text": "..." } ]
+#   }
+#
+# Each section may carry:
+#   - "activityTitle"  — bold header line
+#   - "activityText"   — sub-header / body text
+#   - "facts"          — list of { "name": "...", "value": "..." } key-value pairs
+#                        (rendered as a two-column table in the Teams UI)
+#   - "text"           — free-form markdown (Teams supports a limited subset)
+#
+# The "themeColor" top border mirrors the Slack "color" sidebar accent and the
+# VictorOps "message_type" — one global accent driven by the top finding's
+# severity.  The Teams colour palette follows the same ouija severity mapping as
+# the Slack colour map (critical→red, high→orange, medium→yellow/amber,
+# low→blue, info→grey).
+#
+# A clean run (zero findings) emits a card with a grey "No findings" section and
+# a green themeColor — clearly distinguishable from a findings card at a glance.
+#
+# SECURITY: all attacker-influenced text (titles, evidence, response excerpts) is
+# HTML-escaped before insertion into Teams MessageCard fields.  Teams renders a
+# small subset of HTML inside section text; an unescaped ``<script>`` or
+# ``<img src=...>`` in a response excerpt could otherwise render as live markup.
+# We reuse Python's stdlib ``html.escape`` (already imported for the HTML
+# renderer) for this purpose.
+
+# Teams card theme colours by severity (6-char hex, no leading #).
+_TEAMS_THEME_COLOR: dict[Severity, str] = {
+    Severity.CRITICAL: "b30000",
+    Severity.HIGH: "d9480f",
+    Severity.MEDIUM: "f08c00",
+    Severity.LOW: "1c7ed6",
+    Severity.INFO: "5c6770",
+}
+
+# Green for a clean run — visually distinct from any findings card.
+_TEAMS_CLEAN_THEME_COLOR = "2f9e44"
+
+# Cap per-finding evidence to avoid excessively long card sections.
+_TEAMS_EVIDENCE_CAP = 500
+
+# Maximum full per-finding sections to include before emitting an overflow note.
+# Teams MessageCard has no hard block limit, but very long cards are unreadable;
+# cap at 20 and surface the rest via the --format json report.
+_TEAMS_MAX_FINDING_SECTIONS = 20
+
+
+def _teams_escape(text: str) -> str:
+    """HTML-escape *text* for safe inclusion in a Teams MessageCard field.
+
+    Teams MessageCard sections support a limited HTML subset.  We escape
+    ``&``, ``<``, and ``>`` so attacker-influenced values (response excerpts
+    carrying ``<script>`` or ``<img>`` — the active-content sink class ouija
+    reports) cannot inject HTML into the rendered card.
+    """
+    if not text:
+        return ""
+    return html.escape(str(text), quote=True)
+
+
+def _teams_truncate(text: str, cap: int = _TEAMS_EVIDENCE_CAP) -> str:
+    """Truncate *text* to *cap* characters with a trailing ellipsis."""
+    if not text:
+        return ""
+    s = str(text)
+    if len(s) <= cap:
+        return s
+    return s[: cap - 1].rstrip() + "…"
+
+
+def to_teams(result: ScanResult) -> str:
+    """Render the scan as a Microsoft Teams incoming-webhook MessageCard payload.
+
+    Where ``--format slack`` is the Slack-native rendering (Block Kit +
+    attachment coloring) and ``--format pagerduty`` / ``--format opsgenie`` /
+    ``--format victorops`` target on-call platforms, ``--format teams`` targets
+    the Microsoft Teams chat surface — the enterprise collaboration platform that
+    many security teams run alongside or instead of Slack.  The payload is a
+    `MessageCard <https://learn.microsoft.com/en-us/outlook/actionable-messages/message-card-reference>`_
+    JSON document that is POST-able directly to a Teams incoming-webhook
+    connector URL with no additional service layer or transformation:
+
+    .. code-block:: bash
+
+        ouija --target … --scope-file scope.txt --format teams > teams.json
+        curl -X POST -H 'Content-Type: application/json' \\
+             --data @teams.json "$TEAMS_WEBHOOK_URL"
+
+    The card structure:
+
+    - **themeColor** — a hex accent colour on the card's left border, driven by
+      the top finding's severity (critical→red, high→orange, medium→amber,
+      low→blue, info→grey, no findings→green).
+    - **summary** — one-line plaintext preview shown in Teams notifications.
+    - **title** — the card header line.
+    - **Run summary section** — target URL, attack set, request count, finding
+      count, rendered as a ``facts`` key-value list.
+    - **Per-finding sections** (severity-sorted, capped at
+      ``_TEAMS_MAX_FINDING_SECTIONS``) — each section carries an
+      ``activityTitle`` with severity + finding title, a ``facts`` list
+      (category, OWASP, confidence, pattern ID, reliability if ``--repeats > 1``),
+      and a truncated evidence text.
+    - **Overflow note** — if the scan produced more findings than the cap, one
+      final section names the overflow count and points to ``--format json``.
+
+    SECURITY: every attacker-influenced value is HTML-escaped via
+    :func:`_teams_escape` before insertion.  Teams card sections render a small
+    HTML subset; an unescaped ``<script>`` in a response excerpt would otherwise
+    inject active HTML into the rendered card.
+
+    [Worker decision (Phase 2 / R37): chose ``--format teams`` (Microsoft Teams
+    MessageCard) over other potential improvements.  The ``--format slack``
+    docstring and the ``--notify`` help text both reference "Slack/Teams" as the
+    canonical chat-alert pair, but Teams has never had a dedicated format despite
+    being the dominant enterprise chat platform (large-org security teams run
+    Teams far more than Slack).  The MessageCard format is the direct Teams
+    equivalent of Slack Block Kit: a pure-stdlib JSON shaping function over the
+    final :class:`~ouija.models.ScanResult`, no new dependencies, no architecture
+    change, same "render → operator pipes to webhook" boundary every prior format
+    honours.  It closes the Teams half of the advertised "Slack/Teams" pair and
+    follows the identical pattern as the seven prior integration-format additions
+    (slack, pagerduty, opsgenie, victorops, jira, sarif, jsonl).]
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+
+    # Theme colour — top finding drives the accent; green for a clean run.
+    if findings:
+        theme_color = _TEAMS_THEME_COLOR.get(
+            findings[0].severity, _TEAMS_CLEAN_THEME_COLOR
+        )
+    else:
+        theme_color = _TEAMS_CLEAN_THEME_COLOR
+
+    summary_line = (
+        f"ouija scan of {result.target}: "
+        f"{len(findings)} finding(s) across {result.patterns_sent} request(s)."
+    )
+    title_line = f"ouija findings: {_teams_escape(result.target)}"
+
+    sections: list[dict[str, Any]] = []
+
+    # --- Run summary section ---
+    summary_facts: list[dict[str, str]] = [
+        {"name": "Target", "value": _teams_escape(result.target)},
+        {"name": "Attack set", "value": _teams_escape(result.attack_set)},
+        {"name": "Requests sent", "value": str(result.patterns_sent)},
+        {"name": "Findings", "value": str(len(findings))},
+        {"name": "ouija version", "value": _teams_escape(result.version)},
+        {"name": "Scan ID", "value": _teams_escape(result.scan_id)},
+    ]
+    sections.append(
+        {
+            "activityTitle": "Run summary",
+            "facts": summary_facts,
+        }
+    )
+
+    # --- Clean run ---
+    if not findings:
+        sections.append(
+            {
+                "activityTitle": "✅ No findings",
+                "activityText": (
+                    "The target refused or sanitized all probes in this attack set."
+                ),
+            }
+        )
+    else:
+        # --- Per-finding sections (severity-sorted, capped) ---
+        shown = findings[:_TEAMS_MAX_FINDING_SECTIONS]
+        overflow = len(findings) - len(shown)
+
+        for idx, f in enumerate(shown, start=1):
+            sev = f.severity.value.upper()
+            reliability_str = ""
+            if f.attempts > 1:
+                reliability_str = (
+                    f"{f.successes}/{f.attempts} ({f.success_rate:.0%})"
+                )
+
+            facts: list[dict[str, str]] = [
+                {"name": "Category", "value": _teams_escape(f.category)},
+                {"name": "OWASP", "value": _teams_escape(f.owasp)},
+                {"name": "Confidence", "value": f"{f.confidence:.0%}"},
+                {"name": "Pattern ID", "value": _teams_escape(f.pattern_id)},
+                {"name": "Technique", "value": _teams_escape(f.technique)},
+                {"name": "Finding ID", "value": _teams_escape(f.id)},
+            ]
+            if reliability_str:
+                facts.append({"name": "Reliability", "value": reliability_str})
+
+            evidence_text = _teams_escape(
+                _teams_truncate(f.evidence)
+            )
+
+            sections.append(
+                {
+                    "activityTitle": (
+                        f"{idx}. [{sev}] {_teams_escape(f.title)}"
+                    ),
+                    "facts": facts,
+                    "text": f"<b>Evidence:</b> {evidence_text}",
+                }
+            )
+
+        if overflow > 0:
+            sections.append(
+                {
+                    "activityTitle": f"… {overflow} additional finding(s) not shown",
+                    "activityText": (
+                        f"The card limit is {_TEAMS_MAX_FINDING_SECTIONS} findings. "
+                        f"Run with --format json to see all {len(findings)} findings."
+                    ),
+                }
+            )
+
+    payload: dict[str, Any] = {
+        "@type": "MessageCard",
+        "@context": "https://schema.org/extensions",
+        "themeColor": theme_color,
+        "summary": summary_line,
+        "title": title_line,
+        "sections": sections,
+    }
+    return json.dumps(payload, indent=2)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -2091,6 +2335,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_victorops(result)
     if fmt == "jira":
         return to_jira(result)
+    if fmt == "teams":
+        return to_teams(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif
