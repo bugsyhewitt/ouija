@@ -671,6 +671,41 @@ integration-format renderers: new `to_jira()` function, no new dependency
 
 ---
 
+## Item 20 — Microsoft Teams output format (`--format teams`) — ✅ IMPLEMENTED (Rotation 37)
+
+> **Shipped:** `--format teams` renders the scan as a **Microsoft Teams
+> incoming-webhook MessageCard JSON payload** (new `to_teams()` in
+> `ouija/report.py`). The payload is a `MessageCard` document (`@type:
+> "MessageCard"`, `@context: "https://schema.org/extensions"`) directly
+> POST-able to a Teams incoming-webhook connector URL. The card carries:
+> a `themeColor` hex accent bar driven by the top-finding severity
+> (`critical→b30000`, `high→d9480f`, `medium→f08c00`, `low→1c7ed6`,
+> `info→5c6770`, no findings→`2f9e44` green); a run-summary section with
+> target, attack set, request count, finding count, version, and scan ID as
+> `facts` pairs; one per-finding section per finding (severity-sorted, capped
+> at 20 with an overflow note); and a "No findings" section on a clean run
+> accented green. Per-finding sections carry category, OWASP, confidence,
+> pattern ID, technique, finding ID, truncated evidence, and a "Reliability"
+> fact when `--repeats > 1` (e.g. `3/5 (60%)`). All attacker-influenced values
+> are HTML-escaped via `html.escape` (already imported for the HTML renderer —
+> no new dependency). `teams` added to `--format` choices in `cli.py`; wired
+> into `render()` in `report.py`; README updated with a `--format teams`
+> section and curl snippet. Covered by `tests/test_format_teams.py` (21 tests).
+> Version bumped to 0.1.25.
+
+### Why this over other candidates
+The `--format slack` docstring and the `--notify` CLI help have both referred
+to "Slack/Teams" as the canonical enterprise chat pair since R32, but Teams has
+never had a dedicated format. Enterprise security teams run Microsoft Teams at
+least as often as Slack; without `--format teams` a Teams user must either
+pipe the raw JSON report into a channel (unreadable) or write their own
+transformation layer. `--format teams` closes the Teams half of the advertised
+pair with the same "pure stdlib JSON shaping over `ScanResult`, no new
+dependency, no architecture change" shape as every prior integration-format
+addition (slack, pagerduty, opsgenie, victorops, jira, sarif, jsonl).
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.
