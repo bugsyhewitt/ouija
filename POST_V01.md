@@ -637,6 +637,40 @@ and the real run can never disagree. Self-contained, no network, no new dep.
 
 ---
 
+## Item 19 — Jira Create Issue output format (`--format jira`) — ✅ IMPLEMENTED (Rotation 36)
+
+> **Shipped:** `--format jira` renders the scan as a **Jira Cloud REST API v3
+> Create Issue JSON body** (new `to_jira()` in `ouija/report.py`). The payload
+> is one aggregated issue per scan; `fields.priority.name` maps from the
+> top-finding severity (`critical→Highest`, `high→High`, `medium→Medium`,
+> `low/info→Low`); `fields.description` uses the **Atlassian Document Format
+> (ADF)** (`type: doc`, `version: 1`, `paragraph`/`codeBlock`/`heading` content
+> nodes — Jira Cloud's native rich-text schema, required since 2021);
+> `fields.project.key` and `fields.issuetype.name` are emitted as the literal
+> placeholder strings `<JIRA_PROJECT_KEY>` and `<JIRA_ISSUE_TYPE>` for the
+> operator to substitute before posting; the bearer token travels in the
+> `Authorization` header at curl time — never in the payload body. An
+> `ouija_meta` sidecar carries the scan identity fields. A zero-finding run
+> emits a valid "clean scan record" payload (priority Low). `jira` added to the
+> `--format` choices in `cli.py`; `to_jira` wired into `render()` in
+> `report.py`; README updated with a `--format jira` section and curl snippet.
+> Covered by `tests/test_format_jira.py` (23 tests). Version bumped to 0.1.19.
+
+### Why this over Item 7
+Item 7 (multi-turn / Crescendo) remains the architectural reach goal deferred
+by the Rotation 11 scoping pass — it requires turning the stateless single-shot
+architecture into a stateful turn loop and is not self-contained for a single
+improve lap. This rotation targeted the next integration-format surface: the
+R35 roster note explicitly identified `--format jira` as the next planned
+improvement after `--format victorops` shipped in R35. Where the PagerDuty /
+OpsGenie / VictorOps formats page the on-call immediately, `--format jira`
+opens a durable, assignable, sprint-plannable work item — the project-management
+surface that complements the incident-response ones. Same shape as all prior
+integration-format renderers: new `to_jira()` function, no new dependency
+(stdlib `json` only), no architecture change, no attack corpus touched.
+
+---
+
 ## Recommended sequencing
 
 1, 2, 3 are the high-value / low-complexity core — ship them in that order first. 4 and 5 are independent refinements that can land any time. 6 composes best after 1 and 3. 7 is the architectural reach goal, gated on 3, and should get its own scoping pass before a Worker takes it. Each item is independently shippable as one Phase 2 improve lap; none requires touching `queue/objectives.json` or breaking the v0.1 scope-gate contract.

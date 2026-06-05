@@ -48,7 +48,7 @@ ouija \
 | `--target` | The single HTTP(S) endpoint to test. |
 | `--scope-file` | Path to your authorized-host list (required). |
 | `--attack-set` | `injection`, `disclosure`, `dos`, `exfil`, `agency`, `misinfo`, `activecontent`, `ragpoison`, `safetybypass`, `pii`, `supplychain`, `promptextract`, `outputintegrity`, or `all` (default `all`). |
-| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), `opsgenie` (an OpsGenie Alert API v2 create-alert payload — one aggregated alert per scan, `priority` mapped 1:1 from the top finding's severity (critical→P1 … info→P5), stable `alias` so reruns update the same alert, and a Close-Alert payload on a clean run to auto-close the prior alert; pipe into `https://api.opsgenie.com/v2/alerts` with an `Authorization: GenieKey <key>` header), `victorops` (a VictorOps / Splunk On-Call REST integration payload — one aggregated event per scan, `message_type` mapped from the top finding's severity (critical/high→CRITICAL, medium→WARNING, low/info→INFO), stable `entity_id` so reruns update the same incident, and a `message_type: RECOVERY` payload on a clean run to auto-recover the prior incident; pipe into `https://alert.victorops.com/integrations/generic/20131114/alert/<api-key>/<routing-key>`), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), [OpsGenie output](#opsgenie-output-format-opsgenie), [VictorOps output](#victorops-output-format-victorops), and [SARIF output](#sarif-output-format-sarif). |
+| `--format` | `json` (structured machine-readable report, default), `jsonl` (newline-delimited / streaming JSON — one record per line), `csv` (one row per finding, severity-sorted, spreadsheet-ready), `h1md` (HackerOne markdown), `html` (a single self-contained HTML document with embedded CSS — open in any browser or attach to a ticket), `markdown-table` (a compact one-screen GitHub-flavoured-markdown table — header + one row per finding — that renders inline in a GitHub issue / PR comment / README), `slack` (a Slack Block Kit JSON payload — header + run summary + one section block per finding, wrapped in a severity-coloured attachment; pipe directly into a Slack incoming webhook), `pagerduty` (a PagerDuty Events API v2 enqueue payload — one aggregated event per scan, severity mapped from the top finding, stable `dedup_key` so reruns update the same incident, and an `event_action: resolve` on a clean run to auto-close the prior incident; pipe directly into `https://events.pagerduty.com/v2/enqueue`), `opsgenie` (an OpsGenie Alert API v2 create-alert payload — one aggregated alert per scan, `priority` mapped 1:1 from the top finding's severity (critical→P1 … info→P5), stable `alias` so reruns update the same alert, and a Close-Alert payload on a clean run to auto-close the prior alert; pipe into `https://api.opsgenie.com/v2/alerts` with an `Authorization: GenieKey <key>` header), `victorops` (a VictorOps / Splunk On-Call REST integration payload — one aggregated event per scan, `message_type` mapped from the top finding's severity (critical/high→CRITICAL, medium→WARNING, low/info→INFO), stable `entity_id` so reruns update the same incident, and a `message_type: RECOVERY` payload on a clean run to auto-recover the prior incident; pipe into `https://alert.victorops.com/integrations/generic/20131114/alert/<api-key>/<routing-key>`), `jira` (a Jira Cloud REST API v3 Create Issue JSON body — one aggregated issue per scan, ADF description with per-finding detail blocks, `priority` mapped from top-finding severity (critical→Highest, high→High, medium→Medium, low/info→Low), `fields.project.key` and `fields.issuetype.name` emitted as operator-substitutable placeholders, bearer token in the Authorization header at curl time; POST to `https://<domain>.atlassian.net/rest/api/3/issue`), or `sarif` (SARIF 2.1.0 for GitHub code-scanning / CI dashboards). See [Structured JSON output](#structured-json-output-format-json), [Streaming JSON output](#streaming-json-output-format-jsonl), [CSV output](#csv-output-format-csv), [HTML output](#html-output-format-html), [Markdown-table output](#markdown-table-output-format-markdown-table), [Slack output](#slack-output-format-slack), [PagerDuty output](#pagerduty-output-format-pagerduty), [OpsGenie output](#opsgenie-output-format-opsgenie), [VictorOps output](#victorops-output-format-victorops), [Jira output](#jira-output-format-jira), and [SARIF output](#sarif-output-format-sarif). |
 | `--api-key-env` | Name of an env var holding the target's auth token; sent as `Authorization: Bearer <value>`. The token is read from the environment, never passed on the command line. |
 | `--concurrency` | Max in-flight requests (default 5). |
 | `--request-template` | JSON body template with `"{prompt}"` placeholder. Use when the target does not accept the default `{"prompt": "..."}` shape — see below. |
@@ -641,6 +641,43 @@ lightweight one-POST end-of-scan webhook digest (any HTTP receiver,
 not VictorOps-specific), see [`--notify`](#webhook-notifications---notify);
 `--format victorops` is the VictorOps / Splunk On-Call-native on-call
 paging surface specifically.
+
+## Jira output (`--format jira`)
+
+`--format jira` renders the scan as a **Jira Cloud REST API v3 Create Issue
+JSON body** — the project-management / issue-tracking surface that complements
+the on-call pager integrations (`--format pagerduty` / `--format opsgenie` /
+`--format victorops`). Where those formats page the on-call immediately,
+`--format jira` opens a **durable, assignable work item** in your Jira project
+that can be triaged, prioritised, labelled, sprint-planned, and closed.
+
+The payload is one aggregated issue per scan (not one issue per finding).
+`fields.priority.name` is mapped from the top-finding severity
+(`critical→Highest`, `high→High`, `medium→Medium`, `low/info→Low`).
+The `fields.description` uses the **Atlassian Document Format (ADF)** —
+Jira Cloud's native rich-text schema (`type: doc`, `version: 1`,
+`paragraph`/`codeBlock`/`heading` content nodes) — not raw Markdown.
+`fields.project.key` and `fields.issuetype.name` are emitted as the
+literal placeholder strings `<JIRA_PROJECT_KEY>` and `<JIRA_ISSUE_TYPE>`;
+substitute your real values before posting. The bearer token travels in
+the `Authorization` header at curl time — never in the payload body.
+
+```bash
+ouija --target https://api.example.com/v1/chat \
+      --scope-file scope.txt \
+      --format jira > issue.json
+# edit issue.json: replace <JIRA_PROJECT_KEY> and <JIRA_ISSUE_TYPE>
+curl -s -X POST \
+     -H "Authorization: Bearer $JIRA_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://<domain>.atlassian.net/rest/api/3/issue" \
+     --data @issue.json
+```
+
+The payload also carries an `ouija_meta` sidecar with the scan identity
+fields (`scan_id`, `version`, `target`, `attack_set`, `patterns_sent`,
+`findings_total`, `severity_counts`) so you can correlate the Jira issue
+back to a specific ouija run without opening the full JSON report.
 
 ## Baselines (`--baseline` / `--write-baseline`)
 

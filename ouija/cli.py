@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "victorops", "sarif"],
+        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "victorops", "jira", "sarif"],
         default="json",
         dest="fmt",
         help=(
@@ -134,7 +134,18 @@ def build_parser() -> argparse.ArgumentParser:
             "supplied via the integration URL path at curl time (NOT body "
             "fields), and a zero-finding run emits a `message_type: "
             "RECOVERY` payload against the same entity_id so a clean rerun "
-            "auto-recovers the prior incident), or 'sarif' "
+            "auto-recovers the prior incident), 'jira' "
+            "(a Jira Cloud REST API v3 Create Issue JSON body — a single "
+            "aggregated issue per scan with an ADF description (Atlassian "
+            "Document Format, Jira Cloud's native rich-text schema), "
+            "`priority` mapped from the top finding's severity "
+            "(critical→Highest, high→High, medium→Medium, low/info→Low), "
+            "and `fields.project.key` / `fields.issuetype.name` emitted as "
+            "placeholder strings for the operator to substitute before "
+            "POSTing to "
+            "https://<domain>.atlassian.net/rest/api/3/issue — the bearer "
+            "token travels in the Authorization header at curl time, not in "
+            "the payload body), or 'sarif' "
             "(SARIF 2.1.0 for GitHub code-scanning / CI security dashboards). "
             "SARIF maps each attack category to a rule and each finding to a "
             "result with a GitHub-compatible security-severity; pair it with "
