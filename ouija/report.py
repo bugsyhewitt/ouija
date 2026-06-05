@@ -1798,6 +1798,276 @@ def to_victorops(result: ScanResult) -> str:
     return json.dumps(payload, indent=2)
 
 
+# Jira REST API Create Issue payload (`--format jira`)
+# -------------------------------------------------------
+# Reference: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-post
+#
+# The Jira Cloud REST API Create Issue endpoint
+# (POST https://<domain>.atlassian.net/rest/api/3/issue) accepts a JSON
+# document with a top-level ``fields`` object. Both the bearer token and
+# the project / issue-type values travel outside the body (in the
+# Authorization header and as operator-supplied values), so ouija emits
+# a ``fields``-shaped template with placeholder strings that the operator
+# fills in before posting. The documented schema we emit:
+#
+#   {
+#     "fields": {
+#       "project":     {"key": "<JIRA_PROJECT_KEY>"},
+#       "issuetype":   {"name": "<JIRA_ISSUE_TYPE>"},
+#       "summary":     "<one-line scan title>",
+#       "description": {
+#         "type": "doc", "version": 1,
+#         "content": [...]    ← Atlassian Document Format (ADF)
+#       },
+#       "priority":    {"name": "<Highest|High|Medium|Low>"},
+#       "labels":      ["ouija", "llm-security", ...],
+#       "customfield_10000": "<ouija-scan-id>"  ← comment placeholder
+#     }
+#   }
+#
+# Jira Cloud's rich-text description field uses the Atlassian Document
+# Format (ADF), NOT raw markdown. A description with plain ``paragraph``
+# nodes is universally compatible across Jira Cloud instances; we use
+# ``codeBlock`` nodes for evidence excerpts to preserve verbatim text.
+#
+# Severity → Jira priority mapping (Jira's default priority scheme):
+#   ouija critical → Highest
+#   ouija high     → High
+#   ouija medium   → Medium
+#   ouija low      → Low
+#   ouija info     → Low
+#
+# A zero-finding run emits a "clean" issue payload (priority Low,
+# summary notes zero findings) so the operator can optionally post it as
+# a "scan completed, no issues" record in their Jira project.
+
+_JIRA_PRIORITY: dict[Severity, str] = {
+    Severity.CRITICAL: "Highest",
+    Severity.HIGH: "High",
+    Severity.MEDIUM: "Medium",
+    Severity.LOW: "Low",
+    Severity.INFO: "Low",
+}
+
+
+def _adf_paragraph(*texts: str) -> dict[str, Any]:
+    """Return an ADF ``paragraph`` node containing one or more plain-text runs."""
+    return {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": t} for t in texts if t],
+    }
+
+
+def _adf_code_block(code: str, language: str = "text") -> dict[str, Any]:
+    """Return an ADF ``codeBlock`` node for verbatim evidence text."""
+    return {
+        "type": "codeBlock",
+        "attrs": {"language": language},
+        "content": [{"type": "text", "text": code}],
+    }
+
+
+def _adf_heading(text: str, level: int = 3) -> dict[str, Any]:
+    """Return an ADF ``heading`` node."""
+    return {
+        "type": "heading",
+        "attrs": {"level": level},
+        "content": [{"type": "text", "text": text}],
+    }
+
+
+def _jira_priority_from_result(result: ScanResult) -> str:
+    """Derive the Jira priority from the highest-severity finding in the scan.
+
+    Returns ``"Low"`` for a zero-finding (clean) scan — the operator can
+    still post the clean issue to their project as a record.
+    """
+    if not result.findings:
+        return "Low"
+    findings_sorted = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+    return _JIRA_PRIORITY.get(findings_sorted[0].severity, "Low")
+
+
+def to_jira(result: ScanResult) -> str:
+    """Render the scan as a Jira REST API Create Issue JSON payload.
+
+    Where ``--format pagerduty`` / ``--format opsgenie`` / ``--format victorops``
+    target on-call / incident-response surfaces, ``--format jira`` targets
+    the project-management / issue-tracking surface: a Jira Cloud REST
+    API v3 Create Issue JSON body the operator pipes straight into the
+    Jira ``/rest/api/3/issue`` endpoint to open a tracked security issue
+    in their project.
+
+    The payload is one *aggregated* issue per scan (not one issue per
+    finding) — a Jira issue models a work item, and a single ouija scan
+    that turns up 8 prompt-injection findings should open ONE tracked
+    item ("ouija: 8 LLM-security findings on https://api.example.com/v1/chat
+    [top severity: critical]"), with per-finding detail in the description
+    body under ADF code blocks.
+
+    The ``fields.project.key`` and ``fields.issuetype.name`` values are
+    emitted as placeholder strings (``<JIRA_PROJECT_KEY>`` and
+    ``<JIRA_ISSUE_TYPE>``) — the operator substitutes their real values
+    before posting, exactly as they supply their API token in the
+    Authorization header. This keeps ouija free of per-project
+    configuration flags while still emitting a structurally valid
+    Create Issue body.
+
+    Usage::
+
+        ouija --target … --scope-file scope.txt --format jira > issue.json
+        # edit issue.json: replace <JIRA_PROJECT_KEY> and <JIRA_ISSUE_TYPE>
+        curl -s -X POST \\
+             -H "Authorization: Bearer $JIRA_TOKEN" \\
+             -H "Content-Type: application/json" \\
+             "https://<domain>.atlassian.net/rest/api/3/issue" \\
+             --data @issue.json
+
+    The description uses the **Atlassian Document Format (ADF)** (Jira
+    Cloud's native rich-text schema), not raw markdown — plain ``paragraph``
+    nodes for prose and ``codeBlock`` nodes for evidence excerpts, which
+    are universally compatible across Jira Cloud instances. The bearer
+    token, project key, and issue type travel **outside** the payload body
+    (Authorization header and operator substitution), so neither lands in
+    the scan artifact or log stream.
+
+    [Worker decision (Phase 2 / R36): chose ``--format jira``
+    (Jira REST API v3 Create Issue payload) as the next integration
+    format after ``--format victorops`` (R35). The rotation-36 roster
+    note explicitly called out ``--format jira`` as the next planned
+    improvement after VictorOps shipped. Jira fills the project-tracking
+    / issue-management surface: where PagerDuty / OpsGenie / VictorOps
+    are on-call-pager tools, Jira is the durable work-item tracker where
+    security findings become sprint tasks that can be assigned, labelled,
+    prioritised, and closed. The ADF description format is required for
+    Jira Cloud (which deprecated the v2 wiki-markup description in 2021);
+    using ``paragraph`` + ``codeBlock`` ADF nodes is the minimal
+    universally-compatible subset. Placeholder project-key / issue-type
+    keeps ouija free of per-project config flags while still emitting a
+    structurally valid Create Issue body. No new dependencies — stdlib
+    ``json`` only, same shape as all prior integration-format renderers.]
+    """
+    findings = sorted(
+        result.findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99)
+    )
+    priority_name = _jira_priority_from_result(result)
+
+    # ── Summary (one-line issue title) ────────────────────────────────────
+    if findings:
+        top = findings[0]
+        summary = (
+            f"ouija: {len(findings)} LLM-security finding(s) on {result.target} "
+            f"[top severity: {top.severity.value}]"
+        )
+    else:
+        summary = (
+            f"ouija: 0 findings on {result.target} "
+            f"({result.attack_set}) — clean scan record"
+        )
+
+    # ── ADF description body ───────────────────────────────────────────────
+    adf_content: list[dict[str, Any]] = []
+
+    # Overview paragraph
+    if findings:
+        top = findings[0]
+        overview = (
+            f"ouija v{result.version} scanned {result.target} "
+            f"(attack set: {result.attack_set}) and found {len(findings)} "
+            f"LLM-security issue(s) across {result.patterns_sent} attack "
+            f"request(s). Top finding: [{top.severity.value.upper()}] "
+            f"{top.title} (OWASP: {top.owasp})."
+        )
+    else:
+        overview = (
+            f"ouija v{result.version} scanned {result.target} "
+            f"(attack set: {result.attack_set}) and found 0 issues across "
+            f"{result.patterns_sent} attack request(s). No action required."
+        )
+    adf_content.append(_adf_paragraph(overview))
+
+    # Scan metadata paragraph
+    meta = (
+        f"Scan ID: {result.scan_id} · "
+        f"Timestamp: {result.timestamp} · "
+        f"Attack set: {result.attack_set} · "
+        f"Requests sent: {result.patterns_sent}"
+    )
+    adf_content.append(_adf_paragraph(meta))
+
+    # Per-finding detail blocks
+    if findings:
+        adf_content.append(_adf_heading("Findings", level=3))
+        for idx, f in enumerate(findings, 1):
+            adf_content.append(
+                _adf_heading(
+                    f"{idx}. [{f.severity.value.upper()}] {f.title}", level=4
+                )
+            )
+            detail_lines = [
+                f"ID: {f.id}",
+                f"Category: {f.category}",
+                f"OWASP: {f.owasp}",
+                f"Pattern: {f.pattern_id} (technique: {f.technique})",
+                f"Confidence: {round(f.confidence, 3)}",
+            ]
+            adf_content.append(_adf_paragraph("\n".join(detail_lines)))
+            if f.evidence:
+                adf_content.append(
+                    _adf_code_block(f"Evidence: {f.evidence[:500]}")
+                )
+
+    # Footer
+    adf_content.append(
+        _adf_paragraph(
+            f"Generated by ouija v{result.version} · "
+            f"scan {result.scan_id} · {result.timestamp}. "
+            "Full evidence (prompts, response excerpts) in the "
+            "--format json report."
+        )
+    )
+
+    description_adf = {
+        "type": "doc",
+        "version": 1,
+        "content": adf_content,
+    }
+
+    # ── Severity counts for labels ─────────────────────────────────────────
+    severity_counts: dict[str, int] = {}
+    for f in findings:
+        key = f.severity.value
+        severity_counts[key] = severity_counts.get(key, 0) + 1
+
+    labels = ["ouija", "llm-security", result.attack_set]
+    if findings:
+        top_sev = findings[0].severity.value
+        labels.append(f"severity-{top_sev}")
+
+    payload: dict[str, Any] = {
+        "fields": {
+            "project": {"key": "<JIRA_PROJECT_KEY>"},
+            "issuetype": {"name": "<JIRA_ISSUE_TYPE>"},
+            "summary": summary,
+            "description": description_adf,
+            "priority": {"name": priority_name},
+            "labels": labels,
+        },
+        "ouija_meta": {
+            "scan_id": result.scan_id,
+            "version": result.version,
+            "target": result.target,
+            "attack_set": result.attack_set,
+            "patterns_sent": result.patterns_sent,
+            "findings_total": len(findings),
+            "severity_counts": severity_counts,
+        },
+    }
+    return json.dumps(payload, indent=2)
+
+
 def render(result: ScanResult, fmt: str) -> str:
     if fmt == "json":
         return to_json(result)
@@ -1819,6 +2089,8 @@ def render(result: ScanResult, fmt: str) -> str:
         return to_opsgenie(result)
     if fmt == "victorops":
         return to_victorops(result)
+    if fmt == "jira":
+        return to_jira(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif
