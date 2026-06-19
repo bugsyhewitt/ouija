@@ -1,7 +1,127 @@
 # ouija
 
-A bug-bounty-aligned LLM endpoint fuzzer for finding ship-able findings against
-production LLM-powered HTTP endpoints.
+**ouija is the agentic / RAG / tool-call / MCP-server fuzzer.** Point it at a
+*deployed AI application* — a chatbot with RAG, a tool-using agent, or an MCP
+server — and it answers a sharper, more defensible question than "will this model
+emit a slur if I ask cleverly": **can an attacker make this system do something it
+shouldn't, and can I prove the effect?**
+
+The differentiator is a **data-flow success oracle**: a probe "succeeds" only when
+ouija observes a *real consequence* — a canary exfiltrated to an out-of-band
+collector, a tool invoked with attacker-controlled arguments, an answer flipped to
+attacker content, or a planted secret surfaced — not merely "the model wavered."
+That makes ouija's findings *confirmable*, not debatable. The dominant scanner
+(garak) is documented-shallow on exactly these agentic surfaces and does **not**
+test RAG pipelines; ouija owns that gap.
+
+> **Two CLIs in one tool.** `ouija-agentic` is the agentic/RAG/MCP fuzzer
+> described in the next section. `ouija` (further below) is the original
+> single-target LLM-endpoint fuzzer — still fully supported. They share a corpus
+> philosophy but target different units: `ouija-agentic` attacks *applications and
+> agents*; `ouija` attacks *one HTTP endpoint that wraps a model*.
+
+## The agentic fuzzer (`ouija-agentic`)
+
+`ouija-agentic` drives four classes of target through one engine (one **target
+adapter** abstraction): a raw LLM, a RAG endpoint, a tool-using agent, and an MCP
+server. Its probe taxonomy is mapped to the OWASP **Top 10 for Agentic
+Applications 2026 (ASI01–ASI10)** plus the relevant **LLM Top 10 2025** entries,
+so every finding is standards-tagged.
+
+```bash
+pip install -e .            # core (httpx + pydantic only)
+pip install -e '.[mcp]'     # + the real MCP SDK, to reach a LIVE streamable-HTTP MCP server
+pip install -e '.[garak]'   # + garak, for the §6 static-jailbreak baseline
+
+# See the probe families and their OWASP mapping (safe, sends nothing):
+ouija-agentic list-probes
+
+# Run the headless, self-contained lab self-test (no external target, no GUI):
+ouija-agentic scan-mcp   --lab --confirm    # MCP tool-poisoning + tool-result injection
+ouija-agentic scan-rag   --lab --confirm    # RAG / memory poisoning
+ouija-agentic fuzz-agent --lab --confirm    # excessive agency / data exfiltration
+
+# Against a real, AUTHORIZED target (allow-list + confirm required):
+ouija-agentic scan-mcp --url https://mcp.example.com/mcp --token "$TOK" \
+  --confirm --allow mcp.example.com
+```
+
+### The five attack modules
+
+| Module | OWASP | What it proves |
+|---|---|---|
+| **MCP-server fuzzing** (`scan-mcp`) | ASI02/ASI04/ASI03/ASI07 | The novel centerpiece. Tool-poisoning (static description lint **and** dynamic confirm via an unrequested tool call), tool-result injection, rug-pull / definition drift (TOCTOU), confused-deputy / OAuth audience, token passthrough, SSRF-in-discovery, excessive scope. |
+| **Indirect PI + RAG/memory poisoning** (`scan-rag`, `fuzz-agent`) | ASI01/ASI06/LLM01/LLM08 | An instruction delivered through a channel the model treats as *data* (a retrieved document or a tool's return value) changes behaviour — proven by exfil / tool-call / answer-flip. |
+| **Excessive agency / exfil** (`fuzz-agent`) | ASI02/LLM06 | An injected instruction makes the agent call a dangerous tool, exfiltrate a canary through a permitted tool, or escalate scope. Judged on observed tool-calls, not text. |
+| **System-prompt & memory extraction** (`fuzz-agent`) | LLM07/ASI06 | The system prompt or another session's memory is recovered — confirmed against a *planted canary*, not "prompt-shaped output." |
+| **Direct-jailbreak baseline** (delegated to garak) | LLM01 | The boring static I/O jailbreak/toxicity baseline is delegated to garak (ADR D3) and its JSONL ingested — ouija does not reimplement garak's probe zoo. |
+
+### Why "data-flow effect," not "the model said something bad"
+
+Single-turn indirect prompt injection is *dying* on frontier models — AgentDojo
+and InjecAgent now produce near-zero attack success on the latest base models with
+no defense. A static jailbreak list ages out fast. What still lands is multi-step,
+cross-tool, tool-*result* injection, RAG/memory poisoning, and adaptive attacks —
+all *agentic-surface* attacks, against *deployed systems* (Agent-SafetyBench:
+nothing scored above 60%). ouija targets that surface and reports an
+**attack-success rate with a bootstrap confidence interval** (LLM attacks are
+stochastic; one success is noise), exactly the headline metric the field moved to.
+
+### Safety — this tool sends live adversarial traffic (enforced in code)
+
+`ouija-agentic` sends adversarial payloads to live LLM/agent/MCP endpoints. That
+costs money, may violate provider ToS, and must only ever hit targets you own or
+are authorized to test. The safety posture is **enforced in code, not docs**:
+
+- **Allow-list enforced at the top of every active verb** — a probe against a
+  target not on the allow-list is refused (exit `2`). There is no convenience
+  bypass.
+- **`--confirm` required** for every active verb (exit `3` without it); `--lab`
+  runs the in-repo deliberately-vulnerable fixtures and implicitly allow-lists
+  only loopback.
+- **OOB collector is local by default** — exfil canaries hit a `127.0.0.1`
+  listener; nothing leaves the box.
+- **Destructive agent actions are simulated** against lab no-op tools that record
+  the call.
+- **Planted documents are retracted** (RAG poisoning) and cleanup is asserted —
+  ouija fails loudly if a plant is left behind.
+- **Recovered secrets / system prompts are redacted** in findings (matched span
+  only).
+
+Exit codes: `0` completed (no confirmed finding) · `1` completed with at least one
+**confirmed** data-flow finding (CI-gateable) · `2` target refused (not
+allow-listed) · `3` usage / runtime error / missing `--confirm`.
+
+### Findings are `nmc.finding/v0`
+
+Every agentic finding is emitted as an `nmc.finding/v0` record (the necromancer
+suite's shared schema; `asi`/`llm` live in `refs` until a later packet promotes
+them to first-class fields). Severity is left `null` (a downstream enrichment
+packet assigns it); ouija sets the `effect` type and a `confidence` (the ASR), and
+puts `asr` / `ci95` / `n` in `raw`. A confirmed `oob_exfil` with high ASR is the
+strongest signal; a static-lint-only hit is `detected` until an agent confirms it.
+
+### ouija's own MCP server (it speaks MCP in both directions)
+
+The whole necromancer suite ships MCP servers; ouija is the member that *attacks*
+MCP servers — and it also *exposes its own* capabilities as an MCP server
+(`ouija.mcp_server`), so an agent can call `scan_mcp` / `scan_rag` / `fuzz_agent`
+(all active + gated) and `list_probes` (safe). See `mcp.catalog.json`.
+
+> **Implementation note (adaptation).** Packet 02 sketches the MCP adapter against
+> the `mcp` Python SDK and the lab against a Python `necromancer_mcp.Server`.
+> Neither is present on the build host (the SDK is optional; `necromancer_mcp` is
+> Go-only), so ouija ships its own minimal, dependency-free in-process MCP
+> client/server (`ouija.mcp_proto`) for the core and the headless lab, and bridges
+> to the real SDK (the optional `[mcp]` extra) only to reach a *live* HTTP MCP
+> server. Seeds ship as JSON (not the sketched YAML) to avoid a yaml dependency.
+
+---
+
+## The single-endpoint fuzzer (`ouija`)
+
+The original ouija: a bug-bounty-aligned LLM endpoint fuzzer for finding ship-able
+findings against production LLM-powered HTTP endpoints.
 
 ouija is **not** trying to be the next garak. It defends a narrower niche: you
 point it at **one** HTTP endpoint that wraps an LLM (an OpenAI/Anthropic proxy,
