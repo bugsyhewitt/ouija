@@ -1,7 +1,13 @@
-"""ouija — a bug-bounty-aligned LLM endpoint fuzzer.
+"""ouija — the agentic / RAG / tool-call / MCP-server fuzzer.
 
-Finds ship-able findings against a single, in-scope, production LLM-powered
-HTTP endpoint and emits bug-bounty-formatted reports.
+Points at a deployed AI application — a chatbot with RAG, a tool-using agent, or
+an MCP server — and answers "can an attacker make this do something it shouldn't,
+and can I prove the effect?" with a data-flow success oracle (exfil happened / a
+tool was called / state changed), not merely "the model said something it
+shouldn't."
+
+Also retains the original v0.1 single-endpoint LLM fuzzer (``ouija`` CLI); the
+agentic surface is the ``ouija-agentic`` CLI and the ``ouija`` MCP server.
 """
 
-__version__ = "0.1.25"
+__version__ = "0.2.0"

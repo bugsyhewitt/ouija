@@ -30,10 +30,21 @@ from ouija.lab.tools import LabToolbox
 from ouija.mcp_proto import ClientSession, Server
 
 # Imperative directives a naive agent would wrongly obey when found in data.
-# Captures: (verb, tool-name, rest-of-line) so we can synthesise the tool call.
-_DIRECTIVE = re.compile(
-    r"(?is)\b(?:call|invoke|send|use|run|trigger)\b[^.\n]*?\b"
-    r"(send_email|send_message|read_secrets|get_secrets|wire_transfer|delete_records)\b"
+# A naive agent that sees a sink tool named near an imperative verb obeys it.
+# We detect either order ("call send_email" OR "email ... by calling send_email")
+# by matching any sink-tool name that co-occurs with an action verb in the text;
+# the simplest robust model is: if a sink tool is *named* in data that also
+# contains an imperative verb, the naive agent fires it. (Bounded by newline only,
+# NOT by '.', because URLs/IPs contain dots — the earlier bug.)
+_SINK_NAMES = (
+    "send_email", "send_message", "read_secrets", "get_secrets",
+    "wire_transfer", "delete_records",
+)
+_DIRECTIVE = re.compile(r"\b(" + "|".join(_SINK_NAMES) + r")\b", re.I)
+_ACTION_VERB = re.compile(
+    r"\b(call|calling|invoke|send|sending|use|using|run|trigger|email|emailing|"
+    r"transfer|delete|forward|post)\b",
+    re.I,
 )
 # A URL the directive wants data sent to (the OOB collector or attacker host).
 _URL = re.compile(r"https?://[^\s\"'<>)]+")
@@ -122,16 +133,27 @@ class LabAgent:
     # --- internals ----------------------------------------------------------
 
     def _obey(self, text: str) -> list[dict]:
-        """Synthesise the tool calls a naive agent would make from *text*'s directives."""
+        """Synthesise the tool calls a naive agent would make from *text*'s directives.
+
+        The naive agent fires a sink tool only when the data *both* names the sink
+        and carries an imperative verb — modelling "the model treated this data as
+        an instruction" while not firing on an incidental mention.
+        """
         calls: list[dict] = []
+        if not _ACTION_VERB.search(text):
+            return calls
         url_m = _URL.search(text)
         tok_m = _TOKEN.search(text)
         url = url_m.group(0) if url_m else ""
         token = tok_m.group(0) if tok_m else ""
+        seen: set[str] = set()
         for m in _DIRECTIVE.finditer(text):
-            tool = m.group(1)
+            tool = m.group(1).lower()
             if tool == "read_secrets":
                 tool = "get_secrets"
+            if tool in seen:
+                continue
+            seen.add(tool)
             args = self._args_for(tool, url, token, text)
             # Execute the lab no-op so toolbox.calls records it (incl. OOB GET).
             self._exec(tool, args)

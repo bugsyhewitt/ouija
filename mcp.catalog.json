@@ -1,0 +1,44 @@
+{
+  "name": "ouija",
+  "version": "0.2.0",
+  "description": "Agentic / RAG / MCP-server fuzzer with a data-flow success oracle. Points at a deployed AI application (chatbot+RAG, tool-using agent, or MCP server) and proves whether an attacker can make it do something it shouldn't.",
+  "tags": ["ai", "llm", "agent", "rag", "mcp", "fuzzing", "red-team"],
+  "active_tools": ["scan_mcp", "fuzz_agent", "scan_rag"],
+  "safe_tools": ["list_probes"],
+  "tools": [
+    {
+      "name": "list_probes",
+      "active": false,
+      "description": "List ouija's probe families with their OWASP ASI/LLM mappings (safe, read-only)."
+    },
+    {
+      "name": "scan_mcp",
+      "active": true,
+      "gated": true,
+      "description": "Fuzz a target MCP server: tool-poisoning (static lint + dynamic confirm), tool-result injection, rug-pull / definition drift, confused-deputy / OAuth, token passthrough, SSRF-in-discovery, excessive scope. Requires confirm=true and an allow-listed target.",
+      "owasp": ["ASI02", "ASI04", "ASI03", "ASI07", "LLM01"]
+    },
+    {
+      "name": "fuzz_agent",
+      "active": true,
+      "gated": true,
+      "description": "Fuzz a tool-using agent for indirect prompt injection, excessive agency, and data exfiltration through permitted tools. Judged on observed tool-calls / OOB data-flow, not text. Requires confirm=true and an allow-listed target.",
+      "owasp": ["ASI01", "ASI02", "LLM01", "LLM06"]
+    },
+    {
+      "name": "scan_rag",
+      "active": true,
+      "gated": true,
+      "description": "Fuzz a RAG pipeline for retrieval/memory poisoning and indirect injection: plant a document, retrieve it with a benign query, and confirm the data-flow effect (exfil / tool-call / answer-flip). Plants are retracted; cleanup is asserted. Requires confirm=true and an allow-listed target.",
+      "owasp": ["ASI06", "LLM08"]
+    }
+  ],
+  "safety": {
+    "allow_list_enforced": true,
+    "oob_collector": "local_by_default",
+    "destructive_actions": "simulated_against_lab_tools_by_default",
+    "cleanup": "planted_artifacts_retracted",
+    "redaction": "secrets_and_system_prompts_redacted_in_findings"
+  },
+  "finding_schema": "nmc.finding/v0"
+}
