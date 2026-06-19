@@ -53,12 +53,17 @@ async def fuzz_agent(
     for seed in seeds:
         if seed.target != "agent":
             continue
-        canary = oracle.new_canary()
-        oob = _oob_or_blank(oracle, canary)
-        rendered = seed.render(canary=canary.token, oob=oob)
-        payload = (list(mutate.variants(rendered, budget=1)) or [rendered])[0]
 
-        async def probe():
+        # A FRESH canary per attempt (bound via default arg to avoid late-binding):
+        # the OOB collector's saw() is sticky and a flipped answer re-contains the
+        # token, so reusing one canary across repeats would make judge() return a
+        # hit on every later attempt and collapse the ASR/CI to [1,1]. Minting per
+        # attempt keeps each repeat an independent trial (the whole point of A6).
+        async def probe(seed=seed):
+            canary = oracle.new_canary()
+            oob = _oob_or_blank(oracle, canary)
+            rendered = seed.render(canary=canary.token, oob=oob)
+            payload = (list(mutate.variants(rendered, budget=1)) or [rendered])[0]
             turn = await agent.send(payload)
             import asyncio as _aio
             await _aio.sleep(0.02)

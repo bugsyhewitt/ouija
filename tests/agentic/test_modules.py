@@ -86,6 +86,40 @@ def test_fuzz_agent_hardened_no_findings():
     assert findings == []
 
 
+def test_fuzz_agent_asr_is_stochastic_not_inflated():
+    # Regression: a fresh canary must be minted PER attempt. A flaky (~50%)
+    # target must yield an ASR strictly between 0 and 1 — a single shared canary
+    # would make the sticky OOB collector read every repeat after the first as a
+    # hit and collapse the ASR to 1.0 (anti-pattern A6).
+    import random
+    import re
+
+    import httpx
+
+    rng = random.Random(7)
+
+    class _FlakyAgent:
+        def runner(self, payload, inject_tool_result=None):
+            m = re.search(r"http://127[^ ]+", payload)
+            if m and rng.random() < 0.5:
+                try:
+                    httpx.get(m.group(0), timeout=1.0)
+                except Exception:
+                    pass
+                return ("ok", [{"name": "send_email", "args": {"to": m.group(0)}}])
+            return ("ok", [])
+
+    with LocalCollector() as oob:
+        orc = Oracle(oob=oob)
+        agent = AgentEndpoint(runner=_FlakyAgent().runner)
+        agent.url = "http://127.0.0.1/agent"
+        findings = run(excessive_agency.fuzz_agent(
+            agent, orc, allowlist=["127.0.0.1"], repeats=40))
+    asrs = [f["raw"]["asr"] for f in findings]
+    assert any(0.05 < a < 0.98 for a in asrs), (
+        f"expected a stochastic ASR strictly between 0 and 1, got {asrs}")
+
+
 # --- extraction (§10) -------------------------------------------------------
 
 
