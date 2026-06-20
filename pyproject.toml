@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ouija"
-version = "0.1.24"
-description = "A bug-bounty-aligned LLM endpoint fuzzer for finding ship-able findings against production LLM-powered HTTP endpoints."
+version = "0.2.0"
+description = "The agentic / RAG / tool-call / MCP-server fuzzer: points at a deployed AI application (chatbot+RAG, tool-using agent, or MCP server) and proves whether an attacker can make it do something it shouldn't, with a data-flow success oracle. Also a bug-bounty-aligned single-endpoint LLM fuzzer."
 readme = "README.md"
 requires-python = ">=3.13"
 license = { file = "LICENSE" }
 authors = [{ name = "Bugsy Hewitt" }]
-keywords = ["llm", "security", "fuzzing", "prompt-injection", "bug-bounty", "owasp"]
+keywords = ["llm", "security", "fuzzing", "prompt-injection", "bug-bounty", "owasp", "agent", "rag", "mcp", "red-team", "agentic"]
 classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: Security",
@@ -24,11 +24,22 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
-  "pytest-asyncio>=0.23",
+]
+# Optional: the real MCP Python SDK, only needed to reach a LIVE streamable-HTTP
+# MCP server (the in-process lab + tests need neither). ouija ships its own
+# minimal MCP impl so the core stays dependency-light.
+mcp = [
+  "mcp>=1.0",
+]
+# Optional: garak owns the static I/O jailbreak/toxicity baseline (§6, ADR D3).
+# ouija shells out to it; the parser is tested against a fixture without it.
+garak = [
+  "garak>=0.9",
 ]
 
 [project.scripts]
 ouija = "ouija.cli:main"
+ouija-agentic = "ouija.agentic_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/bugsyhewitt/ouija"
@@ -38,7 +49,7 @@ packages = ["ouija"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "ouija/corpus" = "ouija/corpus"
+"ouija/seeds" = "ouija/seeds"
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
