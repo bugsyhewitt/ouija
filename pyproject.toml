@@ -47,9 +47,5 @@ Homepage = "https://github.com/bugsyhewitt/ouija"
 [tool.hatch.build.targets.wheel]
 packages = ["ouija"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"ouija/corpus" = "ouija/corpus"
-"ouija/seeds" = "ouija/seeds"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
