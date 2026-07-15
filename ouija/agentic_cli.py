@@ -37,7 +37,7 @@ from ouija.agentic_scan import (
     scan_mcp_target,
     scan_rag_target,
 )
-from ouija.agentic_report import to_h1md
+from ouija.agentic_report import to_h1md, to_sarif
 from ouija.allowlist import AllowlistError, load_allowlist
 from ouija.asitax import probe_catalog
 from ouija.findings import group_by_owasp
@@ -87,7 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Newline-delimited allow-list file.")
         p.add_argument("--repeats", type=int, default=20, metavar="N",
                        help="ASR/CI repeat count per landed probe (default 20).")
-        p.add_argument("--format", choices=["json", "h1md"], default="json", dest="fmt")
+        p.add_argument("--format", choices=["json", "h1md", "sarif"], default="json",
+                       dest="fmt")
 
     sm = sub.add_parser("scan-mcp", help="Fuzz a target MCP server (§8).")
     add_active_args(sm, target_flag="--url", target_help="MCP server URL.")
@@ -125,6 +126,8 @@ class _CliError(Exception):
 def _render(report, fmt: str = "json") -> str:
     if fmt == "h1md":
         return to_h1md(report)
+    if fmt == "sarif":
+        return to_sarif(report)
     grouped = group_by_owasp(report.findings)
     return json.dumps({
         "tool": "ouija",

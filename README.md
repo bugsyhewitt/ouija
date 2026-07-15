@@ -99,12 +99,13 @@ allow-listed) · `3` usage / runtime error / missing `--confirm`.
 
 ### Output formats (`--format`)
 
-`ouija-agentic` active verbs support two output formats:
+`ouija-agentic` active verbs support three output formats:
 
 | `--format` | Output |
 |---|---|
 | `json` (default) | Structured `nmc.finding/v0` JSON — pipe into `jq`, CI tooling, or a downstream enrichment pipeline. |
 | `h1md` | HackerOne-style markdown draft — one section per finding with state (CONFIRMED / DETECTED), effect type, OWASP mapping, ASR + 95% CI reliability metric, evidence excerpt, and business-impact narrative. Ready to paste into a report. |
+| `sarif` | SARIF 2.1.0 JSON — upload directly to GitHub Advanced Security or Azure DevOps to surface agentic scan findings as code-scanning alerts with OWASP mapping, severity (mapped from effect type), and ASR metadata. |
 
 ```bash
 # Human-readable report for a bug-bounty draft
@@ -116,6 +117,12 @@ ouija-agentic scan-mcp --url https://mcp.example.com/mcp \
 ouija-agentic scan-mcp --url https://mcp.example.com/mcp \
   --token "$TOK" --confirm --allow mcp.example.com \
   --format json | jq '.summary.confirmed'
+
+# SARIF for GitHub Code Scanning upload
+ouija-agentic fuzz-agent --endpoint https://agent.example.com/agent \
+  --confirm --allow agent.example.com \
+  --format sarif > ouija-results.sarif
+gh code-scanning upload-results --sarif ouija-results.sarif
 ```
 
 The h1md report renders confirmed findings first (strongest data-flow proof),
@@ -123,6 +130,12 @@ then detected (static indicators not yet dynamically confirmed). Not-vulnerable
 results are omitted. Every finding section includes its **Attack Success Rate**
 (ASR) and **95% bootstrap CI** so a triager knows whether the finding is
 deterministic or probabilistic before they attempt to reproduce it.
+
+The SARIF report maps `oob_exfil` / `prompt_leak` / `memory_leak` to
+security-severity 8.0 (HIGH), `tool_call` to 7.0, and `answer_flip` to 6.0 —
+so findings appear in GitHub's code-scanning severity buckets automatically.
+Each confirmed finding's SARIF result carries the ASR in its properties for
+triabler-level signal quality assessment.
 
 ### Findings are `nmc.finding/v0`
 
