@@ -59,6 +59,7 @@ async def _run_async(
     inject_via: str = DEFAULT_INJECT_VIA,
     multi_turn: bool = False,
     max_retries: int = 0,
+    timeout: float = 20.0,
 ) -> ScanResult:
     client = TargetClient(
         target,
@@ -66,6 +67,7 @@ async def _run_async(
         request_template=request_template,
         response_path=response_path,
         max_retries=max_retries,
+        timeout=timeout,
     )
     result = ScanResult(
         version=__version__,
@@ -223,6 +225,7 @@ def run_scan(
     inject_via: str = DEFAULT_INJECT_VIA,
     multi_turn: bool = False,
     max_retries: int = 0,
+    timeout: float = 20.0,
 ) -> ScanResult:
     """Synchronous entry point that drives the async probe loop."""
     return asyncio.run(
@@ -239,5 +242,6 @@ def run_scan(
             inject_via=inject_via,
             multi_turn=multi_turn,
             max_retries=max_retries,
+            timeout=timeout,
         )
     )

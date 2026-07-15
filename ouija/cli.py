@@ -344,6 +344,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--timeout",
+        type=float,
+        default=20.0,
+        metavar="SECONDS",
+        help=(
+            "Per-probe HTTP request timeout in seconds (default: 20.0). ouija "
+            "waits at most this long for each target response; probes that exceed "
+            "the timeout are treated as transport errors and (if --retries is "
+            "non-zero) retried with exponential backoff. Lower values (5-10 s) "
+            "surface unresponsive endpoints faster. Higher values (60-120 s) are "
+            "useful against slow inference endpoints or when --attack-set dos sends "
+            "prompts that intentionally trigger long generation runs. Must be "
+            "greater than 0."
+        ),
+    )
+    parser.add_argument(
         "--plan",
         action="store_true",
         dest="plan",
@@ -407,6 +423,11 @@ def main(argv: list[str] | None = None) -> int:
     # --retries must be 0 or a positive integer.
     if args.retries < 0:
         print("error: --retries must be 0 or greater", file=sys.stderr)
+        return EXIT_ERROR
+
+    # --timeout must be a positive number.
+    if args.timeout <= 0.0:
+        print("error: --timeout must be greater than 0", file=sys.stderr)
         return EXIT_ERROR
 
     # Validate request template if provided.
@@ -489,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
             inject_via=args.inject_via,
             multi_turn=args.multi_turn,
             max_retries=args.retries,
+            timeout=args.timeout,
         )
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
         print(f"error: scan failed: {exc}", file=sys.stderr)
