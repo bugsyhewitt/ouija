@@ -164,16 +164,14 @@ PROBE_FAMILIES: tuple[ProbeFamily, ...] = (
     ProbeFamily(
         "cascading_failures", "Cascading failures",
         ("ASI08",), (), ("agent",),
-        "excessive_agency",
+        "indirect_pi",
         "Unbounded recursion / step-budget exhaustion cascades across tools.",
-        stub=True,
     ),
     ProbeFamily(
         "rogue_agents", "Rogue agents",
         ("ASI10",), (), ("agent",),
-        "excessive_agency",
+        "indirect_pi",
         "An agent persists self-reinforcing/adversarial behaviour (Zombie).",
-        stub=True,
     ),
     ProbeFamily(
         "human_agent_trust", "Human-agent trust exploitation",

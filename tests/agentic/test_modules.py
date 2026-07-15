@@ -267,6 +267,104 @@ def test_inter_agent_spoofing_asr_and_ci_on_confirmed():
         assert 0.0 <= lo <= hi <= 1.0
 
 
+# --- cascading_failures / ASI08 ---------------------------------------------
+
+
+def test_cascading_failures_confirms_on_vulnerable_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_cascading_failures(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings, "expected at least one cascading-failures finding on a vulnerable agent"
+    assert all(f["verb"] == "fuzz_agent" for f in findings)
+    effects = {f["effect"] for f in findings}
+    assert "tool_call" in effects, "cascading failures must confirm via tool_call"
+    asi_refs = {ref for f in findings for ref in f["refs"]}
+    assert "ASI08" in asi_refs, "finding must be tagged ASI08"
+
+
+def test_cascading_failures_no_finding_on_hardened_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=False).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_cascading_failures(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings == [], "hardened agent must produce no cascading-failures finding"
+
+
+def test_cascading_failures_enforces_allowlist():
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://evil.example/agent"
+    try:
+        run(indirect_pi.probe_cascading_failures(
+            agent, Oracle(), allowlist=["127.0.0.1"], repeats=2))
+        assert False, "expected AllowlistError"
+    except AllowlistError:
+        pass
+
+
+def test_cascading_failures_asr_and_ci_on_confirmed():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_cascading_failures(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    for f in findings:
+        assert "asr" in f["raw"] and "ci95" in f["raw"]
+        lo, hi = f["raw"]["ci95"]
+        assert 0.0 <= lo <= hi <= 1.0
+
+
+# --- rogue_agents / ASI10 ---------------------------------------------------
+
+
+def test_rogue_agents_confirms_on_vulnerable_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_rogue_agents(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings, "expected at least one rogue-agents finding on a vulnerable agent"
+    assert all(f["verb"] == "fuzz_agent" for f in findings)
+    effects = {f["effect"] for f in findings}
+    assert "answer_flip" in effects, "rogue agents must confirm via answer_flip"
+    asi_refs = {ref for f in findings for ref in f["refs"]}
+    assert "ASI10" in asi_refs, "finding must be tagged ASI10"
+
+
+def test_rogue_agents_no_finding_on_hardened_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=False).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_rogue_agents(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings == [], "hardened agent must produce no rogue-agents finding"
+
+
+def test_rogue_agents_enforces_allowlist():
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://evil.example/agent"
+    try:
+        run(indirect_pi.probe_rogue_agents(
+            agent, Oracle(), allowlist=["127.0.0.1"], repeats=2))
+        assert False, "expected AllowlistError"
+    except AllowlistError:
+        pass
+
+
+def test_rogue_agents_asr_and_ci_on_confirmed():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_rogue_agents(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    for f in findings:
+        assert "asr" in f["raw"] and "ci95" in f["raw"]
+        lo, hi = f["raw"]["ci95"]
+        assert 0.0 <= lo <= hi <= 1.0
+
+
 # --- extraction (§10) -------------------------------------------------------
 
 
