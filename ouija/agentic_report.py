@@ -1,14 +1,17 @@
 """Agentic report renderers for ouija-agentic findings.
 
-Two renderers live here:
+Three renderers live here:
 
 * ``to_h1md(report)`` — HackerOne-style markdown draft, the agentic peer of
   ``ouija/report.py``'s ``to_h1md()`` for the single-endpoint fuzzer.
 * ``to_sarif(report)`` — SARIF 2.1.0 JSON, the CI/CD integration format; lets
   users upload agentic scan results to GitHub Code Scanning, Azure DevOps, and
   any SARIF-compatible aggregator. The agentic peer of ``ouija/sarif.py``.
+* ``to_markdown_table(report)`` — compact GitHub-flavoured-markdown table for
+  inline rendering in GitHub issues, PR comments, and tickets; the agentic peer
+  of ``ouija/report.py``'s ``to_markdown_table()``.
 
-Design choices (both renderers):
+Design choices (all renderers):
   - Confirmed findings (data-flow proof) are shown prominently with their
     ASR/CI, so a triager immediately sees reliability.
   - Detected (static-only) findings are labelled clearly so a reviewer knows
@@ -17,8 +20,9 @@ Design choices (both renderers):
   - Business-impact text is keyed off OWASP ASI/LLM refs (the same refs the
     ``nmc.finding/v0`` schema carries in ``refs``).
   - Every attacker-influenced string (evidence, surface, title) goes through
-    ``_clean_md`` (h1md) or JSON-encoding (SARIF) before insertion to prevent
-    injection into the report structure.
+    ``_clean_md`` (h1md) or JSON-encoding (SARIF) or ``_md_escape_cell``
+    (markdown-table) before insertion to prevent injection into the report
+    structure.
 """
 
 from __future__ import annotations
@@ -380,3 +384,146 @@ def to_sarif(report) -> str:
         ],
     }
     return _json.dumps(sarif, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Markdown-table renderer
+# ---------------------------------------------------------------------------
+
+# Stable column order for the agentic ``--format markdown-table`` triage view.
+# Columns chosen for the agentic scanner differ from the single-endpoint scanner
+# because agentic findings carry ``state``, ``effect``, and ``refs`` (OWASP ASI/LLM
+# refs) instead of ``severity``, ``category``, and ``owasp``.
+# Wide free-text fields (evidence, title prose) are deliberately omitted —
+# they contain multi-line attacker-controlled text that would break GFM table
+# rendering; read ``--format json`` or ``--format h1md`` for full evidence.
+_MD_TABLE_COLUMNS: tuple[str, ...] = (
+    "state",
+    "effect",
+    "owasp",
+    "title",
+    "surface",
+    "asr",
+)
+
+# State sort order: confirmed findings before detected (strongest signal first).
+_STATE_ORDER = {"confirmed": 0, "detected": 1}
+
+
+def _md_escape_cell(text: object) -> str:
+    """Escape a value for safe placement inside a GFM table cell.
+
+    GFM splits table rows on the literal pipe (``|``) character, so any pipe in
+    the value would otherwise break the row's column count. Newlines similarly
+    terminate a row. We escape pipes (``\\|``) and replace any newline /
+    carriage return with a single space so each cell stays on one logical line.
+    The other markdown metacharacters (``*``, ``_``, ``` ` ```) are left as-is
+    — they render as styling inside a cell, which is harmless for a triage
+    table. Attacker-influenced values (title, surface) are passed through this
+    function before insertion.
+    """
+    if not text:
+        return ""
+    return (
+        str(text)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r\n", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
+def _asr_cell(f: dict) -> str:
+    """Format the ASR cell: percentage for confirmed findings, '-' for detected."""
+    state = f.get("state", "detected")
+    if state != "confirmed":
+        return "-"
+    raw = f.get("raw") or {}
+    asr = raw.get("asr")
+    if asr is None:
+        return "-"
+    return f"{asr:.0%}"
+
+
+def to_markdown_table(report) -> str:
+    """Render a ``ScanReport`` as a compact GitHub-flavoured-markdown table.
+
+    Where ``--format h1md`` is a long-form HackerOne report (one ``## Finding``
+    section per finding, with reproduction steps and business-impact prose),
+    ``--format markdown-table`` is the *one-screen triage view*: a single GFM
+    table — header row plus one data row per reportable finding, confirmed-first
+    — that renders cleanly inline in a GitHub issue, PR comment, project README,
+    or any GitHub-flavoured-markdown-rendered surface. Use it when a stakeholder
+    asks "what did the agentic scan find?" and wants the answer at a glance
+    without opening the full JSON or h1md report.
+
+    Column set (agentic-specific — different from the single-endpoint scanner):
+
+    * ``state`` — CONFIRMED or DETECTED; not-vulnerable findings are omitted.
+    * ``effect`` — the data-flow effect proven (oob_exfil, tool_call, …).
+    * ``owasp`` — space-joined OWASP ASI/LLM refs (e.g. "ASI02 ASI04 LLM01").
+    * ``title`` — finding title (attacker-influenced values are pipe-escaped).
+    * ``surface`` — the probe surface (tool name, seed key, …).
+    * ``asr`` — Attack Success Rate as a percentage for confirmed findings; '-'
+      for detected (static-only) findings where no ASR was computed.
+
+    Row ordering: confirmed findings appear before detected (same order as
+    ``--format h1md``). Wide free-text fields (evidence, full OWASP descriptions)
+    are deliberately omitted — read ``--format json`` or ``--format h1md`` for
+    those. A zero-finding run still emits the header/separator so a downstream
+    template (e.g. a PR-comment macro) always sees the table shape.
+
+    All attacker-influenced values (title, surface) are passed through
+    ``_md_escape_cell`` before insertion so a finding whose title or surface
+    contains a pipe character or newline cannot break the table structure.
+    """
+    # Exclude not_vulnerable findings; sort confirmed before detected.
+    reportable = [
+        f for f in report.findings if f.get("state") != "not_vulnerable"
+    ]
+    reportable.sort(key=lambda f: _STATE_ORDER.get(f.get("state", "detected"), 99))
+
+    confirmed_count = sum(1 for f in reportable if f.get("state") == "confirmed")
+    detected_count = sum(1 for f in reportable if f.get("state") == "detected")
+
+    header = "| " + " | ".join(_MD_TABLE_COLUMNS) + " |"
+    separator = "|" + "|".join("---" for _ in _MD_TABLE_COLUMNS) + "|"
+
+    title_line = (
+        f"# ouija agentic findings — {_md_escape_cell(report.target)} "
+        f"({len(reportable)} finding(s): "
+        f"{confirmed_count} confirmed, {detected_count} detected)"
+    )
+
+    if not reportable:
+        return "\n".join([
+            title_line,
+            "",
+            "_No findings. The agentic scan completed without observing a "
+            "data-flow effect or a static indicator against the target._",
+            "",
+            header,
+            separator,
+        ])
+
+    rows: list[str] = [title_line, "", header, separator]
+    for f in reportable:
+        state = f.get("state", "detected")
+        refs = f.get("refs", [])
+        owasp_str = " ".join(str(r) for r in refs) if refs else "—"
+        cells = {
+            "state": "CONFIRMED" if state == "confirmed" else "DETECTED",
+            "effect": _EFFECT_LABEL.get(f.get("effect") or "", f.get("effect") or "—"),
+            "owasp": owasp_str,
+            "title": f.get("title", "—"),
+            "surface": f.get("surface") or "—",
+            "asr": _asr_cell(f),
+        }
+        row = (
+            "| "
+            + " | ".join(_md_escape_cell(cells[col]) for col in _MD_TABLE_COLUMNS)
+            + " |"
+        )
+        rows.append(row)
+    return "\n".join(rows)

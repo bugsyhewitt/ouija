@@ -10,4 +10,4 @@ Also retains the original v0.1 single-endpoint LLM fuzzer (``ouija`` CLI); the
 agentic surface is the ``ouija-agentic`` CLI and the ``ouija`` MCP server.
 """
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"

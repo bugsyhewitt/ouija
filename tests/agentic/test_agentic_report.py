@@ -453,3 +453,224 @@ def test_cli_sarif_in_help(capsys):
         build_parser().parse_args(["scan-mcp", "--help"])
     out = capsys.readouterr().out
     assert "sarif" in out
+
+
+# ---------------------------------------------------------------------------
+# Unit: to_markdown_table on hand-crafted ScanReports
+# ---------------------------------------------------------------------------
+
+def test_markdown_table_has_header_and_separator():
+    """Output must start with a title line and contain the column header row."""
+    from ouija.agentic_report import to_markdown_table, _MD_TABLE_COLUMNS
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],
+    )
+    out = to_markdown_table(report)
+    # Title line
+    assert "# ouija agentic findings" in out
+    assert "http://127.0.0.1/mcp" in out
+    # GFM column header and separator
+    for col in _MD_TABLE_COLUMNS:
+        assert col in out
+    assert "|---|" in out
+
+
+def test_markdown_table_confirmed_finding_row():
+    """A confirmed finding must appear with CONFIRMED state and ASR percentage."""
+    from ouija.agentic_report import to_markdown_table
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],
+    )
+    out = to_markdown_table(report)
+    assert "CONFIRMED" in out
+    assert "85%" in out          # ASR from raw["asr"] = 0.85
+    assert "MCP Tool Poisoning" in out
+    assert "ASI02" in out
+
+
+def test_markdown_table_detected_finding_shows_dash_asr():
+    """A detected (static-only) finding must show '-' in the asr column."""
+    from ouija.agentic_report import to_markdown_table
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_detected()],
+    )
+    out = to_markdown_table(report)
+    assert "DETECTED" in out
+    # ASR column must show '-' (no ASR for static findings)
+    rows = [line for line in out.split("\n") if "DETECTED" in line]
+    assert rows, "expected at least one DETECTED row"
+    # The '-' must be in the DETECTED row (last cell = asr)
+    assert rows[0].endswith("- |")
+
+
+def test_markdown_table_not_vulnerable_omitted():
+    """not_vulnerable findings must not appear in the table."""
+    from ouija.agentic_report import to_markdown_table
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_not_vulnerable()],
+    )
+    out = to_markdown_table(report)
+    assert "Clean tool" not in out
+    # Zero reportable findings -> no-findings notice
+    assert "No findings" in out
+
+
+def test_markdown_table_zero_findings_still_emits_header():
+    """A zero-finding run must still emit the title and column header."""
+    from ouija.agentic_report import to_markdown_table, _MD_TABLE_COLUMNS
+    report = ScanReport(verb="scan_rag", target="http://127.0.0.1/rag", findings=[])
+    out = to_markdown_table(report)
+    assert "# ouija agentic findings" in out
+    assert "No findings" in out
+    for col in _MD_TABLE_COLUMNS:
+        assert col in out
+
+
+def test_markdown_table_confirmed_before_detected():
+    """Confirmed findings must appear before detected in the table output."""
+    from ouija.agentic_report import to_markdown_table
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_detected(), _mock_confirmed()],
+    )
+    out = to_markdown_table(report)
+    confirmed_pos = out.index("CONFIRMED")
+    detected_pos = out.index("DETECTED")
+    assert confirmed_pos < detected_pos, "confirmed row should appear before detected row"
+
+
+def test_markdown_table_pipe_in_title_escaped():
+    """A pipe character in an attacker-controlled title must be escaped."""
+    from ouija.agentic_report import to_markdown_table
+    f = ouija_finding(
+        "fuzz_agent", target="http://127.0.0.1/agent",
+        state="confirmed",
+        title="Pipe | injection | attempt",
+        effect="tool_call",
+        asi=("ASI02",),
+        raw={"asr": 1.0, "ci95": [0.82, 1.0], "n": 5},
+    )
+    report = ScanReport(verb="fuzz_agent", target="http://127.0.0.1/agent",
+                        findings=[f])
+    out = to_markdown_table(report)
+    # Raw unescaped pipe would break the table; escaped form must be present
+    assert "\\|" in out
+    # The table must still be parseable as GFM (each data row has the right
+    # column count — check the data row has the right number of cells)
+    data_rows = [
+        line for line in out.split("\n")
+        if line.startswith("| ") and "CONFIRMED" in line
+    ]
+    assert data_rows, "expected at least one data row"
+    # Count unescaped pipes in the row (escaped \| must not count as column delimiters).
+    # A 6-column GFM row `| c1 | c2 | c3 | c4 | c5 | c6 |` has exactly 7 unescaped
+    # pipes (one leading, one between each pair, one trailing).
+    import re
+    unescaped_pipes = re.findall(r"(?<!\\)\|", data_rows[0])
+    assert len(unescaped_pipes) == 7, (
+        f"expected 7 unescaped pipes for 6 columns: got {len(unescaped_pipes)}"
+    )
+
+
+def test_markdown_table_newline_in_surface_collapsed():
+    """A newline in the surface field must be collapsed to a space."""
+    from ouija.agentic_report import to_markdown_table
+    f = ouija_finding(
+        "fuzz_agent", target="http://127.0.0.1/agent",
+        state="detected",
+        title="Newline in surface",
+        surface="tool\nname",
+        effect="answer_flip",
+        asi=("ASI01",),
+    )
+    report = ScanReport(verb="fuzz_agent", target="http://127.0.0.1/agent",
+                        findings=[f])
+    out = to_markdown_table(report)
+    # The raw newline must not appear in the output (would break GFM row)
+    assert "tool\nname" not in out
+    assert "tool name" in out
+
+
+def test_markdown_table_effect_label_rendered():
+    """Known effect types get the human-readable label, not the raw key."""
+    from ouija.agentic_report import to_markdown_table, _EFFECT_LABEL
+    f = ouija_finding(
+        "fuzz_agent", target="http://127.0.0.1/agent",
+        state="confirmed",
+        title="OOB exfil confirmed",
+        effect="oob_exfil",
+        asi=("ASI02",),
+        raw={"asr": 0.9, "ci95": [0.7, 1.0], "n": 10},
+    )
+    report = ScanReport(verb="fuzz_agent", target="http://127.0.0.1/agent",
+                        findings=[f])
+    out = to_markdown_table(report)
+    assert _EFFECT_LABEL["oob_exfil"] in out
+
+
+def test_markdown_table_summary_counts_in_title():
+    """The title line must carry confirmed and detected counts."""
+    from ouija.agentic_report import to_markdown_table
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed(), _mock_detected()],
+    )
+    out = to_markdown_table(report)
+    assert "2 finding(s)" in out
+    assert "1 confirmed" in out
+    assert "1 detected" in out
+
+
+def test_markdown_table_multiple_refs_joined():
+    """All OWASP refs must appear in the owasp cell, space-joined."""
+    from ouija.agentic_report import to_markdown_table
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],  # refs: ASI02, ASI04, LLM01
+    )
+    out = to_markdown_table(report)
+    owasp_row = [line for line in out.split("\n") if "ASI02" in line]
+    assert owasp_row, "expected a row containing ASI02"
+    assert "ASI04" in owasp_row[0]
+    assert "LLM01" in owasp_row[0]
+
+
+# ---------------------------------------------------------------------------
+# CLI integration: --format markdown-table through main()
+# ---------------------------------------------------------------------------
+
+def test_cli_markdown_table_format_lab_scan_mcp(capsys):
+    """--format markdown-table on scan-mcp --lab must emit a GFM table with findings."""
+    rc = main(["scan-mcp", "--lab", "--confirm",
+               "--repeats", str(FAST_REPEATS), "--format", "markdown-table"])
+    assert rc == EXIT_CONFIRMED
+    out = capsys.readouterr().out
+    assert "# ouija agentic findings" in out
+    assert "CONFIRMED" in out
+    assert "|---|" in out
+    # must NOT be JSON
+    assert not out.strip().startswith("{")
+
+
+def test_cli_markdown_table_format_lab_fuzz_agent(capsys):
+    """--format markdown-table on fuzz-agent --lab must emit a GFM table."""
+    rc = main(["fuzz-agent", "--lab", "--confirm",
+               "--repeats", str(FAST_REPEATS), "--format", "markdown-table"])
+    assert rc == EXIT_CONFIRMED
+    out = capsys.readouterr().out
+    assert "# ouija agentic findings" in out
+    assert "|---|" in out
+
+
+def test_cli_markdown_table_in_help(capsys):
+    """'markdown-table' must appear in the --format help text for active verbs."""
+    import pytest
+    from ouija.agentic_cli import build_parser
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["scan-mcp", "--help"])
+    out = capsys.readouterr().out
+    assert "markdown-table" in out
