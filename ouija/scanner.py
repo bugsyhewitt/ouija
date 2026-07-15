@@ -58,12 +58,14 @@ async def _run_async(
     mutator_set: str = DEFAULT_MUTATOR_SET,
     inject_via: str = DEFAULT_INJECT_VIA,
     multi_turn: bool = False,
+    max_retries: int = 0,
 ) -> ScanResult:
     client = TargetClient(
         target,
         api_key_env=api_key_env,
         request_template=request_template,
         response_path=response_path,
+        max_retries=max_retries,
     )
     result = ScanResult(
         version=__version__,
@@ -220,6 +222,7 @@ def run_scan(
     mutator_set: str = DEFAULT_MUTATOR_SET,
     inject_via: str = DEFAULT_INJECT_VIA,
     multi_turn: bool = False,
+    max_retries: int = 0,
 ) -> ScanResult:
     """Synchronous entry point that drives the async probe loop."""
     return asyncio.run(
@@ -235,5 +238,6 @@ def run_scan(
             mutator_set=mutator_set,
             inject_via=inject_via,
             multi_turn=multi_turn,
+            max_retries=max_retries,
         )
     )
