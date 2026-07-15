@@ -92,6 +92,33 @@ Exit codes: `0` completed (no confirmed finding) · `1` completed with at least 
 **confirmed** data-flow finding (CI-gateable) · `2` target refused (not
 allow-listed) · `3` usage / runtime error / missing `--confirm`.
 
+### Output formats (`--format`)
+
+`ouija-agentic` active verbs support two output formats:
+
+| `--format` | Output |
+|---|---|
+| `json` (default) | Structured `nmc.finding/v0` JSON — pipe into `jq`, CI tooling, or a downstream enrichment pipeline. |
+| `h1md` | HackerOne-style markdown draft — one section per finding with state (CONFIRMED / DETECTED), effect type, OWASP mapping, ASR + 95% CI reliability metric, evidence excerpt, and business-impact narrative. Ready to paste into a report. |
+
+```bash
+# Human-readable report for a bug-bounty draft
+ouija-agentic scan-mcp --url https://mcp.example.com/mcp \
+  --token "$TOK" --confirm --allow mcp.example.com \
+  --format h1md
+
+# Machine-readable JSON for CI / downstream enrichment
+ouija-agentic scan-mcp --url https://mcp.example.com/mcp \
+  --token "$TOK" --confirm --allow mcp.example.com \
+  --format json | jq '.summary.confirmed'
+```
+
+The h1md report renders confirmed findings first (strongest data-flow proof),
+then detected (static indicators not yet dynamically confirmed). Not-vulnerable
+results are omitted. Every finding section includes its **Attack Success Rate**
+(ASR) and **95% bootstrap CI** so a triager knows whether the finding is
+deterministic or probabilistic before they attempt to reproduce it.
+
 ### Findings are `nmc.finding/v0`
 
 Every agentic finding is emitted as an `nmc.finding/v0` record (the necromancer

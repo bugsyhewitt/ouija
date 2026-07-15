@@ -96,6 +96,47 @@ def test_c4_garak_baseline_parsed():
     assert any(f["state"] == "not_vulnerable" for f in findings)
 
 
+# --- Criterion 5: ouija's own MCP server is agent-callable ------------------
+#
+# ouija speaks MCP in both directions: it attacks MCP servers AND exposes its
+# own scan verbs as an MCP server so another agent can call them. This criterion
+# proves the MCP-in-MCP pattern: an MCP client session driving ouija's own
+# mcp_server gets a scan_mcp result with confirmed findings.
+
+
+def test_c5_ouija_mcp_server_callable_by_agent():
+    import json
+    from ouija.mcp_proto import ClientSession
+    from ouija.mcp_server import build_server
+
+    srv = build_server(allowlist=["127.0.0.1"])
+
+    async def _drive():
+        cs = ClientSession(srv)
+        await cs.initialize()
+        # Prove list_probes is safe (no confirm needed)
+        catalog = json.loads(await cs.call_tool("list_probes", {}))
+        assert len(catalog) >= 14, "probe catalog must cover all ASI families"
+        # Drive scan_mcp against the lab server OVER ouija's own MCP server
+        result = json.loads(await cs.call_tool(
+            "scan_mcp",
+            {"lab": "true", "confirm": "true", "repeats": str(FAST_REPEATS)},
+        ))
+        return result
+
+    result = run(_drive())
+    assert result["verb"] == "scan_mcp"
+    assert result["summary"]["confirmed"] >= 1, (
+        "driving scan_mcp via ouija's own MCP server must return confirmed findings"
+    )
+    assert result["summary"]["detected"] >= 1
+    # Every confirmed finding must carry the nmc.finding/v0 schema marker
+    for f in result["findings"]:
+        if f.get("state") == "confirmed":
+            assert f.get("schema") == "nmc.finding/v0"
+            assert "asr" in f.get("raw", {})
+
+
 # --- Criterion 6: ASR/CI reported; cleanup; allow-list enforced --------------
 
 
