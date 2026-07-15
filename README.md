@@ -289,12 +289,13 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.1.14",
+  "version": "0.5.5",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
   "attack_set": "injection",
   "patterns_sent": 88,
+  "elapsed_seconds": 4.271,  // wall-clock seconds for the scan (probes only)
   "findings": [
     {
       "id": "ouija-inj-1a2b3c4d", // stable: same finding -> same ID across runs
@@ -318,6 +319,9 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
     "successful": 1,        // number of findings emitted
     "attack_sets": {        // findings broken down by attack-set name
       "injection": 1
+    },
+    "by_severity": {        // findings broken down by severity bucket
+      "high": 1
     }
   }
 }
@@ -326,6 +330,27 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 `scan_id` is freshly generated for every run so artifacts can be correlated and
 deduped; `timestamp` is a timezone-aware ISO-8601 instant. The `summary` block
 lets consumers read roll-up totals without iterating the `findings` array.
+
+`elapsed_seconds` is the wall-clock duration of the probe loop (from first
+request sent to last reply received), rounded to millisecond precision. It is
+useful for benchmarking scan throughput against an endpoint and for sizing
+`--concurrency` and `--timeout` trade-offs. Extract it with
+`jq '.elapsed_seconds'`.
+
+`summary.by_severity` is a `severity → count` map covering only the buckets
+that fired: a scan with one HIGH and two MEDIUM findings emits
+`{"high": 1, "medium": 2}`; a zero-finding run emits `{}`. Use it for
+at-a-glance risk triage:
+
+```bash
+# How many critical/high findings?
+ouija --target … --scope-file scope.txt --format json \
+  | jq '.summary.by_severity | to_entries | map(select(.key=="critical" or .key=="high")) | map(.value) | add // 0'
+
+# Print the full severity breakdown
+ouija --target … --scope-file scope.txt --format json \
+  | jq '.summary.by_severity'
+```
 
 ### Stable finding IDs
 

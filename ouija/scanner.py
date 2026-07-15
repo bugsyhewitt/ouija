@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import defaultdict
 from typing import NamedTuple
 
@@ -91,6 +92,8 @@ async def _run_async(
     # and prevents a target from learning the token across runs.
     canary = make_canary()
 
+    t_start = time.monotonic()
+
     async with httpx.AsyncClient() as http:
 
         async def probe(pattern, variant_id, prompt, attempt_num) -> _ProbeResult:
@@ -130,6 +133,9 @@ async def _run_async(
         result.patterns_sent = len(tasks)
         raw_results: list[_ProbeResult] = await asyncio.gather(*tasks)
 
+    elapsed = time.monotonic() - t_start
+    result.elapsed_seconds = round(elapsed, 3)
+
     # --- aggregate per logical key ---
     # Group all attempt results by key.
     by_key: dict[str, list[_ProbeResult]] = defaultdict(list)
@@ -166,14 +172,18 @@ async def _run_async(
 
     # --- machine-readable summary roll-up ---
     per_set: dict[str, int] = {}
+    per_severity: dict[str, int] = {}
     for finding in result.findings:
         set_name = _CATEGORY_TO_ATTACK_SET.get(finding.category, finding.category)
         per_set[set_name] = per_set.get(set_name, 0) + 1
+        sev = finding.severity.value
+        per_severity[sev] = per_severity.get(sev, 0) + 1
 
     result.summary = ScanSummary(
         total=result.patterns_sent,
         successful=len(result.findings),
         attack_sets=per_set,
+        by_severity=per_severity,
     )
 
     return result
@@ -189,6 +199,7 @@ async def _run_multi_turn(client: TargetClient, result: ScanResult) -> ScanResul
     """
     all_ladders = ladders()
     turns_sent = 0
+    t_start = time.monotonic()
     async with httpx.AsyncClient() as http:
         for ladder in all_ladders:
             outcome = await run_ladder(http, client, ladder)
@@ -197,17 +208,23 @@ async def _run_multi_turn(client: TargetClient, result: ScanResult) -> ScanResul
             if outcome.finding is not None:
                 result.findings.append(outcome.finding)
 
+    elapsed = time.monotonic() - t_start
+    result.elapsed_seconds = round(elapsed, 3)
     result.patterns_sent = turns_sent
 
     per_set: dict[str, int] = {}
+    per_severity: dict[str, int] = {}
     for finding in result.findings:
         set_name = _CATEGORY_TO_ATTACK_SET.get(finding.category, finding.category)
         per_set[set_name] = per_set.get(set_name, 0) + 1
+        sev = finding.severity.value
+        per_severity[sev] = per_severity.get(sev, 0) + 1
 
     result.summary = ScanSummary(
         total=result.patterns_sent,
         successful=len(result.findings),
         attack_sets=per_set,
+        by_severity=per_severity,
     )
     return result
 
