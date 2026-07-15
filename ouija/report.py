@@ -156,6 +156,57 @@ _SEVERITY_ORDER = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers used by multiple alert / incident renderers
+# ---------------------------------------------------------------------------
+
+def _incident_key(result: ScanResult) -> str:
+    """Stable dedup key derived from target + attack-set.
+
+    All three on-call renderers (PagerDuty ``dedup_key``, OpsGenie ``alias``,
+    VictorOps ``entity_id``) share this semantics: re-scanning the same target
+    with the same attack set must update the same incident, and a clean rerun
+    must close it. Using ``scan_id`` would defeat that — every scan has a fresh
+    random ``scan_id`` — so we key on the stable scan inputs instead.
+    """
+    return f"ouija::{result.target}::{result.attack_set}"
+
+
+def _severity_counts(findings: list) -> dict[str, int]:
+    """Return a severity-value → count mapping for *findings*.
+
+    Used by PagerDuty, OpsGenie, VictorOps, and Jira renderers to surface a
+    severity breakdown without the on-call having to count rows.
+    """
+    counts: dict[str, int] = {}
+    for f in findings:
+        key = f.severity.value
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _compact_finding_records(findings: list) -> list[dict]:
+    """Return a compact per-finding list for incident payload ``custom_details``.
+
+    Full prompts / response excerpts / multi-turn transcripts stay in
+    ``--format json``; this payload is the *alert*, the JSON report is the
+    *evidence* — so only the triage-relevant fields are included.
+    """
+    return [
+        {
+            "id": f.id,
+            "severity": f.severity.value,
+            "title": f.title,
+            "category": f.category,
+            "owasp": f.owasp,
+            "pattern_id": f.pattern_id,
+            "technique": f.technique,
+            "confidence": round(f.confidence, 3),
+        }
+        for f in findings
+    ]
+
+
 def to_json(result: ScanResult) -> str:
     return json.dumps(result.model_dump(mode="json"), indent=2)
 
@@ -575,7 +626,7 @@ MD_TABLE_COLUMNS: tuple[str, ...] = (
 )
 
 
-def _md_escape_cell(text: str) -> str:
+def _md_escape_cell(text: object) -> str:
     """Escape a value for safe placement inside a GFM table cell.
 
     GFM splits table rows on the literal pipe (``|``) character, so any pipe in
@@ -584,6 +635,7 @@ def _md_escape_cell(text: str) -> str:
     return with a single space so each cell stays on one logical line. The other
     markdown metacharacters (``*``, ``_``, ``` ` ```) are left as-is — they
     render as styling inside a cell, which is harmless for a triage table.
+    Imported by :mod:`ouija.agentic_report` so the implementation lives once.
     """
     if not text:
         return ""
@@ -1031,17 +1083,8 @@ _PAGERDUTY_SUMMARY_CAP = 1024
 
 
 def _pagerduty_dedup_key(result: ScanResult) -> str:
-    """Stable dedup_key derived from target + attack-set.
-
-    PagerDuty collapses events sharing a ``dedup_key`` into a single incident
-    and pairs ``event_action: resolve`` against the same key to close it. We
-    want re-scanning the SAME target with the SAME attack set to update the
-    SAME incident (so a triager isn't deluged with one new incident per
-    rescan), and a later clean run to resolve it. Using ``scan_id`` would
-    defeat that — every scan has a fresh random ``scan_id`` — so we key on
-    the stable scan inputs instead: target URL + attack set.
-    """
-    return f"ouija::{result.target}::{result.attack_set}"
+    """Stable dedup_key for PagerDuty — delegates to :func:`_incident_key`."""
+    return _incident_key(result)
 
 
 def to_pagerduty(result: ScanResult) -> str:
@@ -1154,26 +1197,8 @@ def to_pagerduty(result: ScanResult) -> str:
     # multi-turn transcripts stay in `--format json` — this payload is the
     # *alert*, the JSON report is the *evidence* (same rule as `--notify` /
     # `--format slack`).
-    finding_records = [
-        {
-            "id": f.id,
-            "severity": f.severity.value,
-            "title": f.title,
-            "category": f.category,
-            "owasp": f.owasp,
-            "pattern_id": f.pattern_id,
-            "technique": f.technique,
-            "confidence": round(f.confidence, 3),
-        }
-        for f in findings
-    ]
-
-    # Severity-bucket counts so the incident detail surfaces the breakdown
-    # without the on-call having to count rows.
-    severity_counts: dict[str, int] = {}
-    for f in findings:
-        key = f.severity.value
-        severity_counts[key] = severity_counts.get(key, 0) + 1
+    finding_records = _compact_finding_records(findings)
+    severity_counts = _severity_counts(findings)
 
     custom_details: dict[str, Any] = {
         "tool": result.tool,
@@ -1303,17 +1328,12 @@ _OPSGENIE_DESCRIPTION_CAP = 15000
 
 
 def _opsgenie_alias(result: ScanResult) -> str:
-    """Stable alias derived from target + attack-set.
+    """Stable alias for OpsGenie — shares key format with :func:`_incident_key`.
 
-    OpsGenie collapses alerts sharing an ``alias`` into a single open alert
-    and pairs a Close-Alert call against the same alias to close it. We want
-    re-scanning the SAME target with the SAME attack set to update the SAME
-    alert (so a triager isn't deluged with one new alert per rescan), and a
-    later clean run to close it. Using ``scan_id`` would defeat that — every
-    scan has a fresh random ``scan_id`` — so we key on the stable scan inputs
-    instead: target URL + attack set. Same rule as the PagerDuty dedup_key.
+    OpsGenie ``alias`` is hard-capped at 512 characters; truncate defensively
+    so the dedup behaviour is never silently broken by a very long target URL.
     """
-    alias = f"ouija::{result.target}::{result.attack_set}"
+    alias = _incident_key(result)
     if len(alias) > _OPSGENIE_ALIAS_CAP:
         alias = alias[:_OPSGENIE_ALIAS_CAP]
     return alias
@@ -1432,12 +1452,7 @@ def to_opsgenie(result: ScanResult) -> str:
     if len(message) > _OPSGENIE_MESSAGE_CAP:
         message = message[: _OPSGENIE_MESSAGE_CAP - 1] + "…"
 
-    # Severity-bucket counts so the alert detail surfaces the breakdown
-    # without the on-call having to count rows.
-    severity_counts: dict[str, int] = {}
-    for f in findings:
-        key = f.severity.value
-        severity_counts[key] = severity_counts.get(key, 0) + 1
+    severity_counts = _severity_counts(findings)
 
     # Long-form description — a human-readable digest the on-call reads in
     # the alert detail pane. Stays under the 15000-char cap by limiting to
@@ -1467,19 +1482,7 @@ def to_opsgenie(result: ScanResult) -> str:
     # a string because OpsGenie's `details` map is string→string. Keep each
     # record small enough that a heavy scan (dozens of findings) still
     # produces a payload OpsGenie will accept.
-    finding_records = [
-        {
-            "id": f.id,
-            "severity": f.severity.value,
-            "title": f.title,
-            "category": f.category,
-            "owasp": f.owasp,
-            "pattern_id": f.pattern_id,
-            "technique": f.technique,
-            "confidence": round(f.confidence, 3),
-        }
-        for f in findings
-    ]
+    finding_records = _compact_finding_records(findings)
 
     # `details` is a string→string map per the OpsGenie schema. Coerce every
     # value to its str() form; nested structures are JSON-encoded into a
@@ -1588,19 +1591,8 @@ _VICTOROPS_MESSAGE_TYPE: dict[Severity, str] = {
 
 
 def _victorops_entity_id(result: ScanResult) -> str:
-    """Stable entity_id derived from target + attack-set.
-
-    VictorOps collapses events sharing an ``entity_id`` into a single
-    incident and pairs a RECOVERY message against the same entity_id to
-    close it. We want re-scanning the SAME target with the SAME attack
-    set to update the SAME incident (so a triager isn't deluged with one
-    new incident per rescan), and a later clean run to recover it. Using
-    ``scan_id`` would defeat that — every scan has a fresh random
-    ``scan_id`` — so we key on the stable scan inputs instead: target
-    URL + attack set. Same stable-key rule as the PagerDuty dedup_key
-    and the OpsGenie alias.
-    """
-    return f"ouija::{result.target}::{result.attack_set}"
+    """Stable entity_id for VictorOps — delegates to :func:`_incident_key`."""
+    return _incident_key(result)
 
 
 def _victorops_epoch(iso_timestamp: str) -> int:
@@ -1755,10 +1747,7 @@ def to_victorops(result: ScanResult) -> str:
         f"[top severity: {top.severity.value}]"
     )
 
-    severity_counts: dict[str, int] = {}
-    for f in findings:
-        key = f.severity.value
-        severity_counts[key] = severity_counts.get(key, 0) + 1
+    severity_counts = _severity_counts(findings)
 
     state_message_lines = [
         f"ouija scan of {result.target} (attack set: {result.attack_set}) "
@@ -1777,19 +1766,7 @@ def to_victorops(result: ScanResult) -> str:
     ]
     state_message = "\n".join(state_message_lines)
 
-    finding_records = [
-        {
-            "id": f.id,
-            "severity": f.severity.value,
-            "title": f.title,
-            "category": f.category,
-            "owasp": f.owasp,
-            "pattern_id": f.pattern_id,
-            "technique": f.technique,
-            "confidence": round(f.confidence, 3),
-        }
-        for f in findings
-    ]
+    finding_records = _compact_finding_records(findings)
 
     payload: dict[str, Any] = {
         "message_type": message_type,
@@ -2053,10 +2030,7 @@ def to_jira(result: ScanResult) -> str:
     }
 
     # ── Severity counts for labels ─────────────────────────────────────────
-    severity_counts: dict[str, int] = {}
-    for f in findings:
-        key = f.severity.value
-        severity_counts[key] = severity_counts.get(key, 0) + 1
+    severity_counts = _severity_counts(findings)
 
     labels = ["ouija", "llm-security", result.attack_set]
     if findings:
@@ -2329,34 +2303,28 @@ def to_teams(result: ScanResult) -> str:
     return json.dumps(payload, indent=2)
 
 
+_RENDERERS: dict[str, Any] = {
+    "json": to_json,
+    "jsonl": to_jsonl,
+    "csv": to_csv,
+    "h1md": to_h1md,
+    "html": to_html,
+    "markdown-table": to_markdown_table,
+    "slack": to_slack,
+    "pagerduty": to_pagerduty,
+    "opsgenie": to_opsgenie,
+    "victorops": to_victorops,
+    "jira": to_jira,
+    "teams": to_teams,
+}
+
+
 def render(result: ScanResult, fmt: str) -> str:
-    if fmt == "json":
-        return to_json(result)
-    if fmt == "jsonl":
-        return to_jsonl(result)
-    if fmt == "csv":
-        return to_csv(result)
-    if fmt == "h1md":
-        return to_h1md(result)
-    if fmt == "html":
-        return to_html(result)
-    if fmt == "markdown-table":
-        return to_markdown_table(result)
-    if fmt == "slack":
-        return to_slack(result)
-    if fmt == "pagerduty":
-        return to_pagerduty(result)
-    if fmt == "opsgenie":
-        return to_opsgenie(result)
-    if fmt == "victorops":
-        return to_victorops(result)
-    if fmt == "jira":
-        return to_jira(result)
-    if fmt == "teams":
-        return to_teams(result)
     if fmt == "sarif":
         # Imported lazily so the SARIF code path is only loaded when requested.
         from ouija.sarif import to_sarif
-
         return to_sarif(result)
-    raise ValueError(f"unknown format '{fmt}'")
+    try:
+        return _RENDERERS[fmt](result)
+    except KeyError:
+        raise ValueError(f"unknown format '{fmt}'")

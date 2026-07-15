@@ -30,6 +30,7 @@ from __future__ import annotations
 import json as _json
 
 from ouija import __version__
+from ouija.report import _md_escape_cell
 
 # ---------------------------------------------------------------------------
 # OWASP-ref → business-impact text (abbreviated for the report)
@@ -408,30 +409,6 @@ _MD_TABLE_COLUMNS: tuple[str, ...] = (
 
 # State sort order: confirmed findings before detected (strongest signal first).
 _STATE_ORDER = {"confirmed": 0, "detected": 1}
-
-
-def _md_escape_cell(text: object) -> str:
-    """Escape a value for safe placement inside a GFM table cell.
-
-    GFM splits table rows on the literal pipe (``|``) character, so any pipe in
-    the value would otherwise break the row's column count. Newlines similarly
-    terminate a row. We escape pipes (``\\|``) and replace any newline /
-    carriage return with a single space so each cell stays on one logical line.
-    The other markdown metacharacters (``*``, ``_``, ``` ` ```) are left as-is
-    — they render as styling inside a cell, which is harmless for a triage
-    table. Attacker-influenced values (title, surface) are passed through this
-    function before insertion.
-    """
-    if not text:
-        return ""
-    return (
-        str(text)
-        .replace("\\", "\\\\")
-        .replace("|", "\\|")
-        .replace("\r\n", " ")
-        .replace("\n", " ")
-        .replace("\r", " ")
-    )
 
 
 def _asr_cell(f: dict) -> str:
