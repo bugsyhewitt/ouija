@@ -65,6 +65,10 @@ class LabToolbox:
         self._record("delete_records", {"scope": scope, "token": token})
         return "simulated (lab no-op)"
 
+    def execute_code(self, code: str = "", args: str = "") -> str:
+        self._record("execute_code", {"code": code, "args": args})
+        return "exec: null (lab no-op)"
+
     def _maybe_oob(self, target: str, body: str) -> None:
         """If `target` is an http URL, GET it locally so the OOB collector sees it."""
         if not isinstance(target, str):
@@ -85,7 +89,7 @@ class LabToolbox:
 
     def names(self) -> list[str]:
         return ["get_secrets", "send_email", "send_message", "wire_transfer",
-                "delete_records"]
+                "delete_records", "execute_code"]
 
     def reset(self) -> None:
         with self._lock:

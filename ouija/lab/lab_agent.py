@@ -38,7 +38,7 @@ from ouija.mcp_proto import ClientSession, Server
 # NOT by '.', because URLs/IPs contain dots — the earlier bug.)
 _SINK_NAMES = (
     "send_email", "send_message", "read_secrets", "get_secrets",
-    "wire_transfer", "delete_records",
+    "wire_transfer", "delete_records", "execute_code",
 )
 _DIRECTIVE = re.compile(r"\b(" + "|".join(_SINK_NAMES) + r")\b", re.I)
 _ACTION_VERB = re.compile(
@@ -177,6 +177,8 @@ class LabAgent:
             return {"scope": "all", "token": token}
         if tool == "get_secrets":
             return {}
+        if tool == "execute_code":
+            return {"code": token or "attacker_payload()", "args": token}
         return {}
 
     def _exec(self, tool: str, args: dict) -> None:

@@ -152,16 +152,14 @@ PROBE_FAMILIES: tuple[ProbeFamily, ...] = (
     ProbeFamily(
         "inter_agent_spoofing", "Inter-agent message spoofing",
         ("ASI07",), (), ("agent",),
-        "excessive_agency",
+        "indirect_pi",
         "Forged/replayed messages between agents are accepted.",
-        stub=True,
     ),
     ProbeFamily(
         "unexpected_code_exec", "Unexpected code execution",
         ("ASI05",), (), ("agent", "mcp"),
-        "excessive_agency",
+        "indirect_pi",
         "Injected input reaches a code-exec sink (eval/exec/shell).",
-        stub=True,
     ),
     ProbeFamily(
         "cascading_failures", "Cascading failures",
