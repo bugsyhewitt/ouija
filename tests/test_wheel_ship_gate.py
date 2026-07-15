@@ -10,10 +10,10 @@ import ouija
 from ouija.asitax import PROBE_FAMILIES
 
 
-EXPECTED_VERSION = "0.5.2"
+EXPECTED_VERSION = "0.5.3"
 
 
-def test_version_is_0_5_2():
+def test_version_is_0_5_3():
     assert ouija.__version__ == EXPECTED_VERSION, (
         f"expected version {EXPECTED_VERSION}, got {ouija.__version__!r} — "
         "bump ouija/__init__.py and pyproject.toml before shipping"

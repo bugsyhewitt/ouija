@@ -21,16 +21,47 @@ zero findings.
 
 [Worker decision (v0.1): response field extraction is heuristic (reply/response/
 content/output/text/message). Custom request templating landed in v0.1.1.
-Response-path pinning (--response-path) landed in v0.1.2.]
+Response-path pinning (--response-path) landed in v0.1.2.
+Retry-on-transient-error (--retries) landed in v0.5.3.]
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass
 
 import httpx
+
+
+# ---------------------------------------------------------------------------
+# Retry support
+# ---------------------------------------------------------------------------
+
+#: HTTP status codes that indicate a transient server-side condition safe to
+#: retry.  429 = rate-limited; 502/503/504 = transient gateway / overload.
+_RETRYABLE_STATUSES: frozenset[int] = frozenset({429, 502, 503, 504})
+
+
+async def _retry_delay(retry_num: int) -> None:
+    """Exponential backoff between retry attempts (0-indexed retry number).
+
+    Delay schedule: ``0.5 × 2**retry_num`` seconds, capped at 8 seconds::
+
+        retry 0 → 0.5 s
+        retry 1 → 1.0 s
+        retry 2 → 2.0 s
+        …
+        retry 4+ → 8.0 s (cap)
+
+    This is a module-level coroutine so tests can patch it with a zero-delay
+    stand-in without touching the ``TargetClient`` constructor::
+
+        async def _instant(n: int) -> None: ...
+        monkeypatch.setattr("ouija.client._retry_delay", _instant)
+    """
+    await asyncio.sleep(min(0.5 * (2 ** retry_num), 8.0))
 
 
 @dataclass
@@ -180,9 +211,14 @@ class TargetClient:
         timeout: float = 20.0,
         request_template: str | None = None,
         response_path: str | None = None,
+        max_retries: int = 0,
     ):
         self.target = target
         self.timeout = timeout
+        #: Maximum number of *additional* attempts after the first failure.
+        #: 0 (default) means no retry.  Retries fire on :data:`_RETRYABLE_STATUSES`
+        #: and :exc:`httpx.TransportError` with exponential backoff.
+        self.max_retries = max_retries
         self._headers: dict[str, str] = {"Content-Type": "application/json"}
         if api_key_env:
             token = os.environ.get(api_key_env)
@@ -231,14 +267,48 @@ class TargetClient:
             text = raw
         return Reply(status_code=resp.status_code, text=text, raw=raw)
 
+    async def _do_post(self, client: httpx.AsyncClient, body: bytes) -> httpx.Response:
+        """POST *body* to the target URL, retrying on transient errors.
+
+        Retries on :data:`_RETRYABLE_STATUSES` (429/502/503/504) and on
+        :exc:`httpx.TransportError` (network-level faults), up to
+        :attr:`max_retries` additional attempts.  Uses exponential backoff
+        via :func:`_retry_delay` (patchable in tests).
+
+        When retries are exhausted the last response is returned (even if it
+        carries a retryable status code) so the caller always gets a
+        :class:`~httpx.Response` to work with.  A :exc:`httpx.TransportError`
+        on the final attempt is re-raised so the scanner can surface it.
+        """
+        last_resp: httpx.Response | None = None
+
+        for attempt in range(self.max_retries + 1):
+            if attempt > 0:
+                await _retry_delay(attempt - 1)
+            try:
+                resp = await client.post(
+                    self.target,
+                    content=body,
+                    headers=self._headers,
+                    timeout=self.timeout,
+                )
+                last_resp = resp
+                if resp.status_code not in _RETRYABLE_STATUSES:
+                    # Non-retryable status (or success) — return immediately.
+                    return resp
+                # Retryable status — try again if retry budget remains.
+            except httpx.TransportError:
+                if attempt == self.max_retries:
+                    raise  # budget exhausted; propagate the last transport error
+                # Transport error with retries remaining — loop around.
+
+        # Retry budget exhausted with a retryable status code on every attempt.
+        assert last_resp is not None  # always set: range(max_retries + 1) >= 1
+        return last_resp
+
     async def send(self, client: httpx.AsyncClient, prompt: str) -> Reply:
         body = self._build_body(prompt)
-        resp = await client.post(
-            self.target,
-            content=body,
-            headers=self._headers,
-            timeout=self.timeout,
-        )
+        resp = await self._do_post(client, body)
         return self._extract_reply(resp)
 
     def _build_conversation_body(self, messages: list[dict[str, str]]) -> bytes:
@@ -268,13 +338,9 @@ class TargetClient:
         This is the stateful counterpart to :meth:`send`: the caller passes the
         accumulated conversation (every prior user + assistant turn plus the new
         user turn) and gets back the model's reply to the final turn. Response
-        extraction is identical to single-shot.
+        extraction is identical to single-shot.  Retry behaviour is governed by
+        :attr:`max_retries` exactly as in :meth:`send`.
         """
         body = self._build_conversation_body(messages)
-        resp = await client.post(
-            self.target,
-            content=body,
-            headers=self._headers,
-            timeout=self.timeout,
-        )
+        resp = await self._do_post(client, body)
         return self._extract_reply(resp)

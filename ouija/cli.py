@@ -329,6 +329,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--retries",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Retry transient HTTP errors (429, 502, 503, 504) and network faults "
+            "up to N additional times per probe, using exponential backoff starting "
+            "at 0.5 s (0.5 s, 1.0 s, 2.0 s, …, capped at 8 s). Default: 0 (no "
+            "retry). Recommended values: 1-2 for production endpoints that "
+            "occasionally rate-limit (429) or return transient gateway errors. "
+            "Does not affect the total request count shown by --plan (retries are "
+            "conditional and unpredictable until the scan runs)."
+        ),
+    )
+    parser.add_argument(
         "--plan",
         action="store_true",
         dest="plan",
@@ -388,6 +403,11 @@ def _validate_request_template(raw: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # --retries must be 0 or a positive integer.
+    if args.retries < 0:
+        print("error: --retries must be 0 or greater", file=sys.stderr)
+        return EXIT_ERROR
 
     # Validate request template if provided.
     request_template: str | None = None
@@ -468,6 +488,7 @@ def main(argv: list[str] | None = None) -> int:
             mutator_set=args.mutators,
             inject_via=args.inject_via,
             multi_turn=args.multi_turn,
+            max_retries=args.retries,
         )
     except Exception as exc:  # noqa: BLE001 — surface any transport error cleanly
         print(f"error: scan failed: {exc}", file=sys.stderr)
