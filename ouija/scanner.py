@@ -21,6 +21,27 @@ from ouija.mutate import DEFAULT_MUTATOR_SET, mutate
 
 # Maps a finding's corpus category back to the --attack-set name it belongs to,
 # so the JSON summary can break findings down per attack set even on an "all" run.
+def _build_summary(result: "ScanResult") -> "ScanSummary":
+    """Compute the machine-readable summary roll-up from result.findings.
+
+    Extracted as a helper because both ``_run_async`` and ``_run_multi_turn``
+    perform this identical 12-line computation over their findings list.
+    """
+    per_set: dict[str, int] = {}
+    per_severity: dict[str, int] = {}
+    for finding in result.findings:
+        set_name = _CATEGORY_TO_ATTACK_SET.get(finding.category, finding.category)
+        per_set[set_name] = per_set.get(set_name, 0) + 1
+        sev = finding.severity.value
+        per_severity[sev] = per_severity.get(sev, 0) + 1
+    return ScanSummary(
+        total=result.patterns_sent,
+        successful=len(result.findings),
+        attack_sets=per_set,
+        by_severity=per_severity,
+    )
+
+
 _CATEGORY_TO_ATTACK_SET = {
     "prompt_injection": "injection",
     "sensitive_info_disclosure": "disclosure",
@@ -170,22 +191,7 @@ async def _run_async(
             )
             result.findings.append(annotated)
 
-    # --- machine-readable summary roll-up ---
-    per_set: dict[str, int] = {}
-    per_severity: dict[str, int] = {}
-    for finding in result.findings:
-        set_name = _CATEGORY_TO_ATTACK_SET.get(finding.category, finding.category)
-        per_set[set_name] = per_set.get(set_name, 0) + 1
-        sev = finding.severity.value
-        per_severity[sev] = per_severity.get(sev, 0) + 1
-
-    result.summary = ScanSummary(
-        total=result.patterns_sent,
-        successful=len(result.findings),
-        attack_sets=per_set,
-        by_severity=per_severity,
-    )
-
+    result.summary = _build_summary(result)
     return result
 
 
@@ -211,21 +217,7 @@ async def _run_multi_turn(client: TargetClient, result: ScanResult) -> ScanResul
     elapsed = time.monotonic() - t_start
     result.elapsed_seconds = round(elapsed, 3)
     result.patterns_sent = turns_sent
-
-    per_set: dict[str, int] = {}
-    per_severity: dict[str, int] = {}
-    for finding in result.findings:
-        set_name = _CATEGORY_TO_ATTACK_SET.get(finding.category, finding.category)
-        per_set[set_name] = per_set.get(set_name, 0) + 1
-        sev = finding.severity.value
-        per_severity[sev] = per_severity.get(sev, 0) + 1
-
-    result.summary = ScanSummary(
-        total=result.patterns_sent,
-        successful=len(result.findings),
-        attack_sets=per_set,
-        by_severity=per_severity,
-    )
+    result.summary = _build_summary(result)
     return result
 
 
