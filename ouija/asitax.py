@@ -179,11 +179,10 @@ PROBE_FAMILIES: tuple[ProbeFamily, ...] = (
     ),
     ProbeFamily(
         "human_agent_trust", "Human-agent trust exploitation",
-        ("ASI09",), (), ("agent", "mcp"),
+        ("ASI09",), ("LLM01",), ("agent", "mcp"),
         "indirect_pi",
         "Attacker content is surfaced to the human as trusted agent output / "
         "consent (line-jumping into a confirmation the user rubber-stamps).",
-        stub=True,
     ),
 )
 

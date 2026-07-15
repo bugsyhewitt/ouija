@@ -120,6 +120,55 @@ def test_fuzz_agent_asr_is_stochastic_not_inflated():
         f"expected a stochastic ASR strictly between 0 and 1, got {asrs}")
 
 
+# --- trust exploitation / ASI09 (§7 / ASI09) --------------------------------
+
+
+def test_trust_exploitation_confirms_on_vulnerable_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_trust_exploitation(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings, "expected at least one trust-exploitation finding on a vulnerable agent"
+    assert all(f["verb"] == "fuzz_agent" for f in findings)
+    effects = {f["effect"] for f in findings}
+    assert "answer_flip" in effects, "trust exploitation must confirm via answer_flip"
+    asi_refs = {ref for f in findings for ref in f["refs"]}
+    assert "ASI09" in asi_refs, "finding must be tagged ASI09"
+
+
+def test_trust_exploitation_no_finding_on_hardened_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=False).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_trust_exploitation(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings == [], "hardened agent must produce no trust-exploitation finding"
+
+
+def test_trust_exploitation_enforces_allowlist():
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://evil.example/agent"
+    try:
+        run(indirect_pi.probe_trust_exploitation(
+            agent, Oracle(), allowlist=["127.0.0.1"], repeats=2))
+        assert False, "expected AllowlistError"
+    except AllowlistError:
+        pass
+
+
+def test_trust_exploitation_asr_and_ci_on_confirmed():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_trust_exploitation(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    for f in findings:
+        assert "asr" in f["raw"] and "ci95" in f["raw"]
+        lo, hi = f["raw"]["ci95"]
+        assert 0.0 <= lo <= hi <= 1.0
+
+
 # --- extraction (§10) -------------------------------------------------------
 
 

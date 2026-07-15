@@ -148,4 +148,6 @@ async def fuzz_agent_target(
             agent, oracle, allowlist=allowlist, mutate=mutate, repeats=repeats)
         findings += await indirect_pi.probe_tool_result_injection(
             agent, oracle, allowlist=allowlist, mutate=mutate, repeats=repeats)
+        findings += await indirect_pi.probe_trust_exploitation(
+            agent, oracle, allowlist=allowlist, mutate=mutate, repeats=repeats)
     return ScanReport("fuzz_agent", agent.url, findings)
