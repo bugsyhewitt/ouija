@@ -93,6 +93,10 @@ class ScanSummary(BaseModel):
     successful: int = 0
     # attack_set name -> number of findings attributed to it.
     attack_sets: dict[str, int] = Field(default_factory=dict)
+    # Severity bucket -> number of findings (e.g. {"critical": 1, "high": 2}).
+    # Only populated for severities with at least one finding; absent severities
+    # are omitted (not emitted as 0) so consumers can check membership safely.
+    by_severity: dict[str, int] = Field(default_factory=dict)
 
 
 class ScanResult(BaseModel):
@@ -110,3 +114,7 @@ class ScanResult(BaseModel):
     patterns_sent: int
     findings: list[Finding] = Field(default_factory=list)
     summary: ScanSummary = Field(default_factory=ScanSummary)
+    # Wall-clock seconds elapsed from first probe sent to last reply received.
+    # None when the value is not available (e.g. in tests that build a
+    # ScanResult directly without going through the scanner).
+    elapsed_seconds: Optional[float] = None
