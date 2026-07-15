@@ -169,6 +169,104 @@ def test_trust_exploitation_asr_and_ci_on_confirmed():
         assert 0.0 <= lo <= hi <= 1.0
 
 
+# --- unexpected_code_exec / ASI05 -------------------------------------------
+
+
+def test_unexpected_code_exec_confirms_on_vulnerable_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_unexpected_code_exec(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings, "expected at least one code-exec finding on a vulnerable agent"
+    assert all(f["verb"] == "fuzz_agent" for f in findings)
+    effects = {f["effect"] for f in findings}
+    assert "tool_call" in effects, "code exec must confirm via tool_call"
+    asi_refs = {ref for f in findings for ref in f["refs"]}
+    assert "ASI05" in asi_refs, "finding must be tagged ASI05"
+
+
+def test_unexpected_code_exec_no_finding_on_hardened_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=False).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_unexpected_code_exec(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings == [], "hardened agent must produce no code-exec finding"
+
+
+def test_unexpected_code_exec_enforces_allowlist():
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://evil.example/agent"
+    try:
+        run(indirect_pi.probe_unexpected_code_exec(
+            agent, Oracle(), allowlist=["127.0.0.1"], repeats=2))
+        assert False, "expected AllowlistError"
+    except AllowlistError:
+        pass
+
+
+def test_unexpected_code_exec_asr_and_ci_on_confirmed():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_unexpected_code_exec(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    for f in findings:
+        assert "asr" in f["raw"] and "ci95" in f["raw"]
+        lo, hi = f["raw"]["ci95"]
+        assert 0.0 <= lo <= hi <= 1.0
+
+
+# --- inter_agent_spoofing / ASI07 -------------------------------------------
+
+
+def test_inter_agent_spoofing_confirms_on_vulnerable_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_inter_agent_spoofing(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings, "expected at least one spoofing finding on a vulnerable agent"
+    assert all(f["verb"] == "fuzz_agent" for f in findings)
+    effects = {f["effect"] for f in findings}
+    assert "answer_flip" in effects, "inter-agent spoofing must confirm via answer_flip"
+    asi_refs = {ref for f in findings for ref in f["refs"]}
+    assert "ASI07" in asi_refs, "finding must be tagged ASI07"
+
+
+def test_inter_agent_spoofing_no_finding_on_hardened_agent():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=False).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_inter_agent_spoofing(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    assert findings == [], "hardened agent must produce no inter-agent-spoofing finding"
+
+
+def test_inter_agent_spoofing_enforces_allowlist():
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://evil.example/agent"
+    try:
+        run(indirect_pi.probe_inter_agent_spoofing(
+            agent, Oracle(), allowlist=["127.0.0.1"], repeats=2))
+        assert False, "expected AllowlistError"
+    except AllowlistError:
+        pass
+
+
+def test_inter_agent_spoofing_asr_and_ci_on_confirmed():
+    orc = Oracle()
+    agent = AgentEndpoint(runner=LabAgent(LabToolbox(), vulnerable=True).runner)
+    agent.url = "http://127.0.0.1/agent"
+    findings = run(indirect_pi.probe_inter_agent_spoofing(
+        agent, orc, allowlist=["127.0.0.1"], repeats=FAST_REPEATS))
+    for f in findings:
+        assert "asr" in f["raw"] and "ci95" in f["raw"]
+        lo, hi = f["raw"]["ci95"]
+        assert 0.0 <= lo <= hi <= 1.0
+
+
 # --- extraction (§10) -------------------------------------------------------
 
 

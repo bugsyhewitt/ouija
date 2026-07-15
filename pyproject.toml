@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ouija"
-version = "0.3.1"
+version = "0.4.0"
 description = "The agentic / RAG / tool-call / MCP-server fuzzer: points at a deployed AI application (chatbot+RAG, tool-using agent, or MCP server) and proves whether an attacker can make it do something it shouldn't, with a data-flow success oracle. Also a bug-bounty-aligned single-endpoint LLM fuzzer."
 readme = "README.md"
 requires-python = ">=3.13"
