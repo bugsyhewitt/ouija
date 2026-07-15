@@ -1,5 +1,9 @@
 # ouija
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/bugsyhewitt/bugsyhewitt.github.io/main/public/cards/ouija.jpg" alt="ouija" width="680">
+</p>
+
 **ouija is the agentic / RAG / tool-call / MCP-server fuzzer.** Point it at a
 *deployed AI application* — a chatbot with RAG, a tool-using agent, or an MCP
 server — and it answers a sharper, more defensible question than "will this model
