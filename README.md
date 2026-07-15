@@ -289,7 +289,7 @@ ouija --target https://api.example.com/v1/chat --scope-file scope.txt \
 ```jsonc
 {
   "tool": "ouija",
-  "version": "0.5.5",
+  "version": "1.0.0",
   "scan_id": "e248016b52a54a0cae46b6effde1e236", // unique per run
   "timestamp": "2026-05-28T12:33:25.410593+00:00", // ISO-8601 UTC
   "target": "https://api.example.com/v1/chat",
