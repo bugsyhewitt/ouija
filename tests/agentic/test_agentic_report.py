@@ -1,4 +1,4 @@
-"""Tests for ouija/agentic_report.py — --format h1md for ouija-agentic."""
+"""Tests for ouija/agentic_report.py — --format h1md and --format sarif."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from tests.agentic.conftest import FAST_REPEATS
 
 from ouija.agentic_cli import EXIT_CONFIRMED, EXIT_OK, main
-from ouija.agentic_report import to_h1md
+from ouija.agentic_report import SARIF_VERSION, to_h1md, to_sarif
 from ouija.agentic_scan import ScanReport
 from ouija.findings import ouija_finding
 
@@ -239,3 +239,217 @@ def test_cli_json_format_still_works(capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["verb"] == "scan_mcp"
     assert "findings" in data
+
+
+# ---------------------------------------------------------------------------
+# Unit: to_sarif on hand-crafted ScanReports
+# ---------------------------------------------------------------------------
+
+def test_sarif_valid_schema_root():
+    """to_sarif emits valid SARIF 2.1.0 structure (version, schema, runs)."""
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],
+    )
+    doc = json.loads(to_sarif(report))
+    assert doc["version"] == SARIF_VERSION
+    assert "sarif-schema-2.1.0" in doc["$schema"]
+    assert len(doc["runs"]) == 1
+    run = doc["runs"][0]
+    assert run["tool"]["driver"]["name"] == "ouija-agentic"
+
+
+def test_sarif_confirmed_finding_maps_to_error_level():
+    """A confirmed finding must have SARIF level 'error'."""
+    report = ScanReport(
+        verb="fuzz_agent", target="http://127.0.0.1/agent",
+        findings=[_mock_confirmed()],
+    )
+    doc = json.loads(to_sarif(report))
+    results = doc["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["level"] == "error"
+
+
+def test_sarif_detected_finding_maps_to_warning_level():
+    """A detected (static-only) finding must have SARIF level 'warning'."""
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_detected()],
+    )
+    doc = json.loads(to_sarif(report))
+    results = doc["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["level"] == "warning"
+
+
+def test_sarif_not_vulnerable_omitted():
+    """not_vulnerable findings must not appear in the SARIF results array."""
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_not_vulnerable()],
+    )
+    doc = json.loads(to_sarif(report))
+    assert doc["runs"][0]["results"] == []
+    assert doc["runs"][0]["tool"]["driver"]["rules"] == []
+
+
+def test_sarif_zero_findings_clean():
+    """An empty report must produce a valid, zero-results SARIF document."""
+    report = ScanReport(verb="scan_rag", target="http://127.0.0.1/rag", findings=[])
+    doc = json.loads(to_sarif(report))
+    assert doc["runs"][0]["results"] == []
+    assert doc["runs"][0]["tool"]["driver"]["rules"] == []
+
+
+def test_sarif_rules_one_per_owasp_ref():
+    """Each distinct OWASP ref in reportable findings produces exactly one rule."""
+    confirmed = _mock_confirmed()   # refs include ASI02, ASI04, LLM01
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[confirmed, _mock_detected()],
+    )
+    doc = json.loads(to_sarif(report))
+    rule_ids = {r["id"] for r in doc["runs"][0]["tool"]["driver"]["rules"]}
+    # ASI02, ASI04, LLM01 from confirmed; ASI02, LLM01 from detected (overlap de-duped)
+    assert "ASI02" in rule_ids
+    assert "LLM01" in rule_ids
+    # Confirm no duplicates
+    ids_list = [r["id"] for r in doc["runs"][0]["tool"]["driver"]["rules"]]
+    assert len(ids_list) == len(set(ids_list))
+
+
+def test_sarif_result_rule_id_matches_first_asi_llm_ref():
+    """The SARIF ruleId must be the first ASI/LLM ref in the finding's refs."""
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],  # refs=["ASI02", "ASI04", "LLM01"]
+    )
+    doc = json.loads(to_sarif(report))
+    result = doc["runs"][0]["results"][0]
+    assert result["ruleId"] == "ASI02"
+
+
+def test_sarif_result_message_contains_title():
+    """The SARIF result message must contain the finding title."""
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],
+    )
+    doc = json.loads(to_sarif(report))
+    msg = doc["runs"][0]["results"][0]["message"]["text"]
+    assert "MCP Tool Poisoning" in msg
+
+
+def test_sarif_oob_exfil_security_severity_high():
+    """oob_exfil effect must yield a security-severity of 8.0 (HIGH)."""
+    from ouija.findings import ouija_finding
+    f = ouija_finding(
+        "fuzz_agent", target="http://127.0.0.1/agent", state="confirmed",
+        title="OOB exfil confirmed", effect="oob_exfil",
+        asi=("ASI02",), raw={"asr": 1.0, "ci95": [0.82, 1.0], "n": 5},
+    )
+    report = ScanReport(verb="fuzz_agent", target="http://127.0.0.1/agent",
+                        findings=[f])
+    doc = json.loads(to_sarif(report))
+    result = doc["runs"][0]["results"][0]
+    assert result["properties"]["security-severity"] == "8.0"
+
+
+def test_sarif_answer_flip_security_severity_medium():
+    """answer_flip effect must yield a security-severity of 6.0 (MEDIUM)."""
+    from ouija.findings import ouija_finding
+    f = ouija_finding(
+        "fuzz_agent", target="http://127.0.0.1/agent", state="confirmed",
+        title="Answer flipped", effect="answer_flip",
+        asi=("ASI09",), raw={"asr": 0.8, "ci95": [0.6, 0.95], "n": 20},
+    )
+    report = ScanReport(verb="fuzz_agent", target="http://127.0.0.1/agent",
+                        findings=[f])
+    doc = json.loads(to_sarif(report))
+    result = doc["runs"][0]["results"][0]
+    assert result["properties"]["security-severity"] == "6.0"
+
+
+def test_sarif_partial_fingerprints_present():
+    """Every result must carry a partialFingerprints.ouijaFindingId for dedup."""
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed(), _mock_detected()],
+    )
+    doc = json.loads(to_sarif(report))
+    for result in doc["runs"][0]["results"]:
+        assert "ouijaFindingId" in result.get("partialFingerprints", {})
+
+
+def test_sarif_asr_in_properties_when_confirmed():
+    """Confirmed findings (with ASR in raw) must expose asr in SARIF properties."""
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],
+    )
+    doc = json.loads(to_sarif(report))
+    props = doc["runs"][0]["results"][0]["properties"]
+    assert "asr" in props
+    assert props["asr"] == 0.85
+
+
+def test_sarif_automation_details_carries_verb():
+    """automationDetails.id must carry the verb for run-level identification."""
+    report = ScanReport(verb="fuzz_agent", target="http://127.0.0.1/agent",
+                        findings=[])
+    doc = json.loads(to_sarif(report))
+    assert "fuzz_agent" in doc["runs"][0]["automationDetails"]["id"]
+
+
+def test_sarif_rule_has_full_description_from_impact():
+    """Each rule's fullDescription must match the _IMPACT text for the ref."""
+    from ouija.agentic_report import _IMPACT
+    report = ScanReport(
+        verb="scan_mcp", target="http://127.0.0.1/mcp",
+        findings=[_mock_confirmed()],  # first ref is ASI02
+    )
+    doc = json.loads(to_sarif(report))
+    asi02_rule = next(
+        r for r in doc["runs"][0]["tool"]["driver"]["rules"] if r["id"] == "ASI02"
+    )
+    assert asi02_rule["fullDescription"]["text"] == _IMPACT["ASI02"]
+
+
+# ---------------------------------------------------------------------------
+# CLI integration: --format sarif through main()
+# ---------------------------------------------------------------------------
+
+def test_cli_sarif_format_lab_scan_mcp(capsys):
+    """--format sarif on scan-mcp --lab must emit valid SARIF with confirmed findings."""
+    rc = main(["scan-mcp", "--lab", "--confirm",
+               "--repeats", str(FAST_REPEATS), "--format", "sarif"])
+    assert rc == EXIT_CONFIRMED
+    out = capsys.readouterr().out
+    doc = json.loads(out)  # must be valid JSON
+    assert doc["version"] == SARIF_VERSION
+    results = doc["runs"][0]["results"]
+    # lab scan_mcp always yields at least one confirmed finding
+    confirmed_results = [r for r in results if r["level"] == "error"]
+    assert confirmed_results, "expected at least one error-level SARIF result"
+
+
+def test_cli_sarif_format_lab_fuzz_agent(capsys):
+    """--format sarif on fuzz-agent --lab must emit valid SARIF."""
+    rc = main(["fuzz-agent", "--lab", "--confirm",
+               "--repeats", str(FAST_REPEATS), "--format", "sarif"])
+    assert rc == EXIT_CONFIRMED
+    out = capsys.readouterr().out
+    doc = json.loads(out)
+    assert doc["version"] == SARIF_VERSION
+    assert len(doc["runs"]) == 1
+
+
+def test_cli_sarif_in_help(capsys):
+    """'sarif' must appear in the --format help text for active verbs."""
+    import pytest
+    from ouija.agentic_cli import build_parser
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["scan-mcp", "--help"])
+    out = capsys.readouterr().out
+    assert "sarif" in out
