@@ -1,54 +1,88 @@
-# ouija lap-20260714T180000Z — Worker output
+# ouija lap-20260715T080000Z — Worker output
 
 ## Improvement shipped
 
-**ASI09 Human-Agent Trust Exploitation — promoted from stub to working smoke probe**
-
-ouija's probe taxonomy (asitax.py) declares coverage of all 10 OWASP ASI categories
-as a pre-v1.0 requirement. Five categories remained stubs. This lap promotes ASI09
-from stub to a real, tested probe, reducing the remaining stubs to 4.
+**`--format markdown-table` for `ouija-agentic`** — a compact GitHub-flavoured-markdown
+triage table for the agentic scanner, closing the gap between the single-endpoint
+fuzzer (which has had `--format markdown-table` since Rotation 30) and
+`ouija-agentic` (which had only `json`, `h1md`, `sarif`).
 
 ## What changed
 
-### New seed file: `ouija/seeds/asi09_trust_exploit.json`
-Two seeds where the injected text directs the agent to surface attacker-crafted
-content to the human as a trusted recommendation or approval request:
-- `trust_fake_approval_request` (technique: human-approval-hijack)
-- `trust_false_recommendation` (technique: false-recommendation-inject)
+### `ouija/agentic_report.py` — new `to_markdown_table()` renderer
 
-Both seeds trigger the existing `_maybe_flip` path in `LabAgent` via the "include
-{canary}" pattern, so no lab changes were needed. Detection is `answer_flip`.
+New function renders a `ScanReport` as a compact GFM table:
+- Confirmed findings appear before detected (strongest signal first, matching h1md ordering).
+- Not-vulnerable findings are omitted (same as h1md and sarif).
+- A zero-finding run still emits the header row so a downstream PR-comment macro always
+  sees the table shape.
+- Columns (agentic-specific, different from the single-endpoint scanner's table):
+  `state` | `effect` | `owasp` | `title` | `surface` | `asr`
+- `asr` shows the Attack Success Rate percentage for confirmed findings; '-' for detected.
+- All attacker-influenced values (title, surface) are passed through `_md_escape_cell`
+  — a finding whose title contains `|` or a newline cannot break the table structure.
+- Module docstring updated (Two renderers → Three renderers).
 
-### New probe function: `ouija/modules/indirect_pi.probe_trust_exploitation()`
-Delivers ASI09 seeds via tool-result injection (the same channel as
-`probe_tool_result_injection`) and confirms via `answer_flip`. Wired into
-`fuzz_agent_target` in `agentic_scan.py`.
+New helpers (module-level, reused by `to_markdown_table`):
+- `_MD_TABLE_COLUMNS`: stable column-order tuple for the agentic table.
+- `_STATE_ORDER`: sort key dict for confirmed-before-detected ordering.
+- `_md_escape_cell()`: pipe/newline escaping for GFM table cells.
+- `_asr_cell()`: formats the asr column value.
 
-### `ouija/asitax.py` — ASI09 un-stubbed
-`human_agent_trust` entry: `stub=True` → `stub=False`, `llm=()` → `llm=("LLM01",)`.
+### `ouija/agentic_cli.py` — `markdown-table` wired into CLI
 
-### `ouija/agentic_scan.py` — fuzz_agent wired
-`probe_trust_exploitation` added after the existing tool-result-injection call.
+- Import: `to_markdown_table` added to the `from ouija.agentic_report import …` line.
+- `--format` choices extended: `["json", "h1md", "sarif", "markdown-table"]`.
+- `_render()`: new branch `if fmt == "markdown-table": return to_markdown_table(report)`.
 
-### Tests: `tests/agentic/test_modules.py` — 4 new tests
-- `test_trust_exploitation_confirms_on_vulnerable_agent` — confirms `answer_flip` + ASI09 ref
-- `test_trust_exploitation_no_finding_on_hardened_agent` — real-negative check
-- `test_trust_exploitation_enforces_allowlist` — `AllowlistError` on unlisted target
-- `test_trust_exploitation_asr_and_ci_on_confirmed` — ASR + CI95 on every finding
+### `tests/agentic/test_agentic_report.py` — 14 new tests
 
-### README updated
-"The five attack modules" table now has a row for Human-agent trust exploitation
-(ASI09/LLM01) under `fuzz-agent`.
+Unit tests (hand-crafted `ScanReport`):
+- `test_markdown_table_has_header_and_separator` — title line + all column names + separator row.
+- `test_markdown_table_confirmed_finding_row` — CONFIRMED state, ASR percentage, title, OWASP refs.
+- `test_markdown_table_detected_finding_shows_dash_asr` — DETECTED state, '-' in asr cell.
+- `test_markdown_table_not_vulnerable_omitted` — not_vulnerable findings excluded; no-findings notice.
+- `test_markdown_table_zero_findings_still_emits_header` — zero-finding report still has header.
+- `test_markdown_table_confirmed_before_detected` — ordering assertion.
+- `test_markdown_table_pipe_in_title_escaped` — raw `|` in title escaped to `\|`; row column count correct.
+- `test_markdown_table_newline_in_surface_collapsed` — `\n` in surface collapsed to space.
+- `test_markdown_table_effect_label_rendered` — human-readable effect label (not raw key).
+- `test_markdown_table_summary_counts_in_title` — title line carries confirmed/detected counts.
+- `test_markdown_table_multiple_refs_joined` — all OWASP refs appear space-joined in owasp cell.
 
-### Version: 0.3.0 → 0.3.1
-Both `pyproject.toml` and `ouija/__init__.py` bumped (they were inconsistent;
-`__init__.py` was stale at 0.2.0, `pyproject.toml` at 0.3.0; both now 0.3.1).
+CLI integration tests:
+- `test_cli_markdown_table_format_lab_scan_mcp` — end-to-end lab scan, GFM output, CONFIRMED row, not JSON.
+- `test_cli_markdown_table_format_lab_fuzz_agent` — end-to-end fuzz-agent lab, GFM output.
+- `test_cli_markdown_table_in_help` — 'markdown-table' appears in --help text.
+
+### `tests/test_wheel_ship_gate.py` — version gate bumped to 0.5.2
+
+`EXPECTED_VERSION` updated from `"0.5.1"` to `"0.5.2"`. Test function renamed
+`test_version_is_0_5_2` (was `test_version_is_0_5_1`). Error message updated.
+
+### `ouija/__init__.py` and `pyproject.toml` — version bumped
+
+`0.5.1` → `0.5.2`.
+
+### `README.md` — Output formats section updated
+
+- Header updated: "three output formats" → "four output formats".
+- New `markdown-table` row in the formats table.
+- New `--format markdown-table` bash example (standalone + `gh pr comment` pipe).
+- Prose description of the markdown-table format (columns, ordering, zero-finding behaviour,
+  attacker-value escaping, full-evidence note).
+- Rendered example showing the table structure.
 
 ## Test results
-554 passed (550 existing + 4 new) in ~90s.
 
-## Remaining stubs (post this lap)
-- ASI05: unexpected_code_exec
-- ASI07: inter_agent_spoofing
-- ASI08: cascading_failures
-- ASI10: rogue_agents
+603 passed in ~105s (589 pre-existing + 14 new). See `test-output.txt`.
+
+## Files changed
+
+- `ouija/agentic_report.py` — new `to_markdown_table()` + helpers
+- `ouija/agentic_cli.py` — import + format choice + `_render()` branch
+- `ouija/__init__.py` — version 0.5.1 → 0.5.2
+- `pyproject.toml` — version 0.5.1 → 0.5.2
+- `tests/agentic/test_agentic_report.py` — 14 new tests
+- `tests/test_wheel_ship_gate.py` — version gate updated
+- `README.md` — Output formats section updated

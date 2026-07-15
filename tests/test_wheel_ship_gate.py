@@ -10,10 +10,10 @@ import ouija
 from ouija.asitax import PROBE_FAMILIES
 
 
-EXPECTED_VERSION = "0.5.1"
+EXPECTED_VERSION = "0.5.2"
 
 
-def test_version_is_0_5_1():
+def test_version_is_0_5_2():
     assert ouija.__version__ == EXPECTED_VERSION, (
         f"expected version {EXPECTED_VERSION}, got {ouija.__version__!r} — "
         "bump ouija/__init__.py and pyproject.toml before shipping"
@@ -24,5 +24,5 @@ def test_no_asi_stubs_remain():
     stubs = [f.key for f in PROBE_FAMILIES if f.stub]
     assert not stubs, (
         f"ASI taxonomy has promoted stubs that are still marked stub=True: {stubs} — "
-        "promote each stub to a working probe before v0.5.1 ships"
+        "promote each stub to a working probe before v0.5.2 ships"
     )

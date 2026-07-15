@@ -99,13 +99,14 @@ allow-listed) · `3` usage / runtime error / missing `--confirm`.
 
 ### Output formats (`--format`)
 
-`ouija-agentic` active verbs support three output formats:
+`ouija-agentic` active verbs support four output formats:
 
 | `--format` | Output |
 |---|---|
 | `json` (default) | Structured `nmc.finding/v0` JSON — pipe into `jq`, CI tooling, or a downstream enrichment pipeline. |
 | `h1md` | HackerOne-style markdown draft — one section per finding with state (CONFIRMED / DETECTED), effect type, OWASP mapping, ASR + 95% CI reliability metric, evidence excerpt, and business-impact narrative. Ready to paste into a report. |
 | `sarif` | SARIF 2.1.0 JSON — upload directly to GitHub Advanced Security or Azure DevOps to surface agentic scan findings as code-scanning alerts with OWASP mapping, severity (mapped from effect type), and ASR metadata. |
+| `markdown-table` | Compact GitHub-flavoured-markdown table — one row per finding (CONFIRMED before DETECTED), columns: state, effect, owasp, title, surface, asr. Renders inline in a GitHub issue, PR comment, or ticket without a report attachment. |
 
 ```bash
 # Human-readable report for a bug-bounty draft
@@ -123,6 +124,16 @@ ouija-agentic fuzz-agent --endpoint https://agent.example.com/agent \
   --confirm --allow agent.example.com \
   --format sarif > ouija-results.sarif
 gh code-scanning upload-results --sarif ouija-results.sarif
+
+# Compact markdown table for a GitHub issue or PR comment
+ouija-agentic fuzz-agent --endpoint https://agent.example.com/agent \
+  --confirm --allow agent.example.com \
+  --format markdown-table
+
+# Post the table directly to a PR comment
+ouija-agentic fuzz-agent --endpoint https://agent.example.com/agent \
+  --confirm --allow agent.example.com \
+  --format markdown-table | gh pr comment <pr> -F -
 ```
 
 The h1md report renders confirmed findings first (strongest data-flow proof),
@@ -136,6 +147,27 @@ security-severity 8.0 (HIGH), `tool_call` to 7.0, and `answer_flip` to 6.0 —
 so findings appear in GitHub's code-scanning severity buckets automatically.
 Each confirmed finding's SARIF result carries the ASR in its properties for
 triabler-level signal quality assessment.
+
+The markdown-table report is the *one-screen triage view*: a single
+GitHub-flavoured-markdown table — header row plus one data row per finding,
+confirmed first — that renders inline in a GitHub issue, PR comment, or ticket
+body without an attachment. Columns: `state` (CONFIRMED / DETECTED), `effect`
+(data-flow effect proven), `owasp` (OWASP ASI/LLM refs), `title`, `surface`
+(the probe surface), `asr` (Attack Success Rate for confirmed findings, `-` for
+detected). Wide free-text fields (evidence, business-impact prose) are omitted —
+read `--format json` or `--format h1md` for those. A zero-finding run still
+emits the header so a PR-comment macro always sees the table shape.
+
+Rendered example:
+
+```markdown
+# ouija agentic findings — https://agent.example.com/agent (2 finding(s): 1 confirmed, 1 detected)
+
+| state | effect | owasp | title | surface | asr |
+|---|---|---|---|---|---|
+| CONFIRMED | Out-of-band exfiltration (OOB callback confirmed) | ASI02 LLM06 | Data exfil via send_message | send_message | 85% |
+| DETECTED | — | ASI02 | Excessive scope in tool description (static lint) | admin | - |
+```
 
 ### Findings are `nmc.finding/v0`
 
