@@ -26,7 +26,7 @@ oracle upgrades to ``confirmed`` (see §8 / Appendix G).
 from __future__ import annotations
 
 import secrets
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ouija.targets.base import Turn
 

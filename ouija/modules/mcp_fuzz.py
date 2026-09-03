@@ -145,8 +145,6 @@ def _scope_flags(tool: dict) -> set[str]:
 
 async def _dynamic_confirms(mcp_t, oracle, tools, mutate, agent_factory, repeats):
     findings: list[dict] = []
-    tool_names = {t["name"] for t in tools}
-
     # 8.1 dynamic: a benign task that uses a (possibly poisoned) tool. We pick a
     # benign tool to exercise (prefer a read-only one like get_weather/echo). The
     # proof is *structural* (Appendix G): the agent was asked to use only the

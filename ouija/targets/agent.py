@@ -23,11 +23,11 @@ never *decides* success — it only surfaces the Turn; the oracle judges.]
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from typing import Callable
 
 import httpx
 
-from ouija.client import TargetClient, extract_by_path, parse_response_path
+from ouija.client import TargetClient, parse_response_path
 from ouija.targets.base import Turn
 
 # runner(payload, inject_tool_result) -> (text, tool_calls) ; may be sync or async.

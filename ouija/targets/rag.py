@@ -24,8 +24,6 @@ ids) and ``assert_clean()`` fails loudly if anything was left behind — §15 sa
 
 from __future__ import annotations
 
-from typing import Callable
-
 import httpx
 
 from ouija.targets.base import Turn

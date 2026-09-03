@@ -230,6 +230,6 @@ def refs_for(asi: tuple[str, ...] = (), llm: tuple[str, ...] = ()) -> list[str]:
     refs: list[str] = []
     for a in asi:
         refs.append(a)
-    for l in llm:
-        refs.append(l)
+    for llm_ref in llm:
+        refs.append(llm_ref)
     return refs

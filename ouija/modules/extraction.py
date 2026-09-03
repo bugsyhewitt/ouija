@@ -20,7 +20,7 @@ from ouija.agentic_mutate import DEFAULT_MUTATOR, Mutator
 from ouija.allowlist import enforce_allowlist
 from ouija.findings import STATE_CONFIRMED, measure, ouija_finding
 from ouija.oracle import Oracle
-from ouija.targets.base import Target, Turn
+from ouija.targets.base import Target
 
 # Extraction seed prompts. These ask, via escalating framings, for the hidden
 # system prompt / other-session memory. Confirmation is on a planted marker.

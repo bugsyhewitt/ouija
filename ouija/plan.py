@@ -31,8 +31,8 @@ from ouija import __version__
 from ouija.conversation import ladders
 from ouija.corpus import LoadedSet
 from ouija.indirect import DEFAULT_INJECT_VIA
-from ouija.mutate import DEFAULT_MUTATOR_SET, mutate
 from ouija.models import AttackPattern
+from ouija.mutate import DEFAULT_MUTATOR_SET, mutate
 
 
 class PlannedAttackSet(BaseModel):

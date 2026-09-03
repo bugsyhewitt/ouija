@@ -74,7 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "jsonl", "csv", "h1md", "html", "markdown-table", "slack", "pagerduty", "opsgenie", "victorops", "jira", "teams", "sarif"],
+        choices=[
+            "json", "jsonl", "csv", "h1md", "html", "markdown-table",
+            "slack", "pagerduty", "opsgenie", "victorops", "jira", "teams", "sarif",
+        ],
         default="json",
         dest="fmt",
         help=(

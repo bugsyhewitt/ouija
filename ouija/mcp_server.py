@@ -24,7 +24,7 @@ from ouija.agentic_scan import (
     scan_mcp_target,
     scan_rag_target,
 )
-from ouija.allowlist import AllowlistError, enforce_allowlist
+from ouija.allowlist import enforce_allowlist
 from ouija.asitax import probe_catalog
 from ouija.mcp_proto import Server
 
