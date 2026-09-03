@@ -19,6 +19,7 @@ from ouija.indirect import DEFAULT_INJECT_VIA, wrap_indirect
 from ouija.models import Finding, ScanResult, ScanSummary
 from ouija.mutate import DEFAULT_MUTATOR_SET, mutate
 
+
 # Maps a finding's corpus category back to the --attack-set name it belongs to,
 # so the JSON summary can break findings down per attack set even on an "all" run.
 def _build_summary(result: "ScanResult") -> "ScanSummary":

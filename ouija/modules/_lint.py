@@ -31,7 +31,8 @@ class LintHit:
 # (Flags passed via re.I|re.S — Python 3.14 rejects inline (?is) mid-expression.)
 _INJECT = re.compile(
     r"\b(ignore|disregard|override)\b.{0,40}\b(previous|prior|above|earlier|instructions?)\b"
-    r"|\b(always|also|additionally|secretly|do not mention|don'?t tell|don'?t mention)\b.{0,60}\b(call|invoke|send|exfil|forward|email|message)\b"
+    r"|\b(always|also|additionally|secretly|do not mention|don'?t tell|don'?t mention)\b"
+    r".{0,60}\b(call|invoke|send|exfil|forward|email|message)\b"
     r"|\bsystem\s*:\s|<!--\s*system|\[system\]|###\s*instruction|assistant\s*directive",
     re.I | re.S,
 )

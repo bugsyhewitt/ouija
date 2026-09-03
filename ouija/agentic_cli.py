@@ -32,12 +32,12 @@ import json
 import sys
 
 from ouija import __version__
+from ouija.agentic_report import to_h1md, to_markdown_table, to_sarif
 from ouija.agentic_scan import (
     fuzz_agent_target,
     scan_mcp_target,
     scan_rag_target,
 )
-from ouija.agentic_report import to_h1md, to_markdown_table, to_sarif
 from ouija.allowlist import AllowlistError, load_allowlist
 from ouija.asitax import probe_catalog
 from ouija.findings import group_by_owasp
